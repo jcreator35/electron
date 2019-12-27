@@ -1,4 +1,5 @@
 import { ipcRendererInternal } from '@electron/internal/renderer/ipc-renderer-internal'
+import * as ipcRendererUtils from '@electron/internal/renderer/ipc-renderer-internal-utils'
 
 // This file implements the following APIs:
 // - window.history.back()
@@ -17,14 +18,8 @@ import { ipcRendererInternal } from '@electron/internal/renderer/ipc-renderer-in
 // - document.hidden
 // - document.visibilityState
 
-const { defineProperty } = Object
-
 // Helper function to resolve relative url.
-const a = window.document.createElement('a')
-const resolveURL = function (url: string) {
-  a.href = url
-  return a.href
-}
+const resolveURL = (url: string, base: string) => new URL(url, base).href
 
 // Use this method to ensure values expected as strings in the main process
 // are convertible to strings in the renderer process. This ensures exceptions
@@ -33,19 +28,19 @@ const toString = (value: any) => {
   return value != null ? `${value}` : value
 }
 
-const windowProxies: Record<number, BrowserWindowProxy> = {}
+const windowProxies = new Map<number, BrowserWindowProxy>()
 
 const getOrCreateProxy = (guestId: number) => {
-  let proxy = windowProxies[guestId]
+  let proxy = windowProxies.get(guestId)
   if (proxy == null) {
     proxy = new BrowserWindowProxy(guestId)
-    windowProxies[guestId] = proxy
+    windowProxies.set(guestId, proxy)
   }
   return proxy
 }
 
 const removeProxy = (guestId: number) => {
-  delete windowProxies[guestId]
+  windowProxies.delete(guestId)
 }
 
 type LocationProperties = 'hash' | 'href' | 'host' | 'hostname' | 'origin' | 'pathname' | 'port' | 'protocol' | 'search'
@@ -69,21 +64,19 @@ class LocationProxy {
    */
   private static ProxyProperty<T> (target: LocationProxy, propertyKey: LocationProperties) {
     Object.defineProperty(target, propertyKey, {
-      get: function (): T | string {
+      get: function (this: LocationProxy): T | string {
         const guestURL = this.getGuestURL()
         const value = guestURL ? guestURL[propertyKey] : ''
         return value === undefined ? '' : value
       },
-      set: function (newVal: T) {
+      set: function (this: LocationProxy, newVal: T) {
         const guestURL = this.getGuestURL()
         if (guestURL) {
           // TypeScript doesn't want us to assign to read-only variables.
           // It's right, that's bad, but we're doing it anway.
           (guestURL as any)[propertyKey] = newVal
 
-          return this.ipcRenderer.sendSync(
-            'ELECTRON_GUEST_WINDOW_MANAGER_WEB_CONTENTS_METHOD_SYNC',
-            this.guestId, 'loadURL', guestURL.toString())
+          return this._invokeWebContentsMethod('loadURL', guestURL.toString())
         }
       }
     })
@@ -102,7 +95,7 @@ class LocationProxy {
   }
 
   private getGuestURL (): URL | null {
-    const urlString = ipcRendererInternal.sendSync('ELECTRON_GUEST_WINDOW_MANAGER_WEB_CONTENTS_METHOD_SYNC', this.guestId, 'getURL')
+    const urlString = this._invokeWebContentsMethodSync('getURL') as string
     try {
       return new URL(urlString)
     } catch (e) {
@@ -110,6 +103,14 @@ class LocationProxy {
     }
 
     return null
+  }
+
+  private _invokeWebContentsMethod (method: string, ...args: any[]) {
+    return ipcRendererInternal.invoke('ELECTRON_GUEST_WINDOW_MANAGER_WEB_CONTENTS_METHOD', this.guestId, method, ...args)
+  }
+
+  private _invokeWebContentsMethodSync (method: string, ...args: any[]) {
+    return ipcRendererUtils.invokeSync('ELECTRON_GUEST_WINDOW_MANAGER_WEB_CONTENTS_METHOD', this.guestId, method, ...args)
   }
 }
 
@@ -126,8 +127,8 @@ class BrowserWindowProxy {
     return this._location
   }
   public set location (url: string | any) {
-    url = resolveURL(url)
-    ipcRendererInternal.sendSync('ELECTRON_GUEST_WINDOW_MANAGER_WEB_CONTENTS_METHOD_SYNC', this.guestId, 'loadURL', url)
+    url = resolveURL(url, this.location.href)
+    this._invokeWebContentsMethod('loadURL', url)
   }
 
   constructor (guestId: number) {
@@ -141,27 +142,35 @@ class BrowserWindowProxy {
   }
 
   public close () {
-    ipcRendererInternal.send('ELECTRON_GUEST_WINDOW_MANAGER_WINDOW_CLOSE', this.guestId)
+    this._invokeWindowMethod('destroy')
   }
 
   public focus () {
-    ipcRendererInternal.send('ELECTRON_GUEST_WINDOW_MANAGER_WINDOW_METHOD', this.guestId, 'focus')
+    this._invokeWindowMethod('focus')
   }
 
   public blur () {
-    ipcRendererInternal.send('ELECTRON_GUEST_WINDOW_MANAGER_WINDOW_METHOD', this.guestId, 'blur')
+    this._invokeWindowMethod('blur')
   }
 
   public print () {
-    ipcRendererInternal.send('ELECTRON_GUEST_WINDOW_MANAGER_WEB_CONTENTS_METHOD', this.guestId, 'print')
+    this._invokeWebContentsMethod('print')
   }
 
-  public postMessage (message: any, targetOrigin: any) {
-    ipcRendererInternal.send('ELECTRON_GUEST_WINDOW_MANAGER_WINDOW_POSTMESSAGE', this.guestId, message, toString(targetOrigin), window.location.origin)
+  public postMessage (message: any, targetOrigin: string) {
+    ipcRendererInternal.invoke('ELECTRON_GUEST_WINDOW_MANAGER_WINDOW_POSTMESSAGE', this.guestId, message, toString(targetOrigin), window.location.origin)
   }
 
-  public eval (...args: any[]) {
-    ipcRendererInternal.send('ELECTRON_GUEST_WINDOW_MANAGER_WEB_CONTENTS_METHOD', this.guestId, 'executeJavaScript', ...args)
+  public eval (code: string) {
+    this._invokeWebContentsMethod('executeJavaScript', code)
+  }
+
+  private _invokeWindowMethod (method: string, ...args: any[]) {
+    return ipcRendererInternal.invoke('ELECTRON_GUEST_WINDOW_MANAGER_WINDOW_METHOD', this.guestId, method, ...args)
+  }
+
+  private _invokeWebContentsMethod (method: string, ...args: any[]) {
+    return ipcRendererInternal.invoke('ELECTRON_GUEST_WINDOW_MANAGER_WEB_CONTENTS_METHOD', this.guestId, method, ...args)
   }
 }
 
@@ -171,7 +180,7 @@ export const windowSetup = (
   if (guestInstanceId == null) {
     // Override default window.close.
     window.close = function () {
-      ipcRendererInternal.sendSync('ELECTRON_BROWSER_WINDOW_CLOSE')
+      ipcRendererInternal.send('ELECTRON_BROWSER_WINDOW_CLOSE')
     }
   }
 
@@ -179,7 +188,7 @@ export const windowSetup = (
     // Make the browser window or guest view emit "new-window" event.
     (window as any).open = function (url?: string, frameName?: string, features?: string) {
       if (url != null && url !== '') {
-        url = resolveURL(url)
+        url = resolveURL(url, location.href)
       }
       const guestId = ipcRendererInternal.sendSync('ELECTRON_GUEST_WINDOW_MANAGER_WINDOW_OPEN', url, toString(frameName), toString(features))
       if (guestId != null) {
@@ -230,10 +239,11 @@ export const windowSetup = (
     ipcRendererInternal.send('ELECTRON_NAVIGATION_CONTROLLER_GO_TO_OFFSET', +offset)
   }
 
-  defineProperty(window.history, 'length', {
+  Object.defineProperty(window.history, 'length', {
     get: function () {
       return ipcRendererInternal.sendSync('ELECTRON_NAVIGATION_CONTROLLER_LENGTH')
-    }
+    },
+    set () {}
   })
 
   if (guestInstanceId != null) {
@@ -255,13 +265,13 @@ export const windowSetup = (
     })
 
     // Make document.hidden and document.visibilityState return the correct value.
-    defineProperty(document, 'hidden', {
+    Object.defineProperty(document, 'hidden', {
       get: function () {
         return cachedVisibilityState !== 'visible'
       }
     })
 
-    defineProperty(document, 'visibilityState', {
+    Object.defineProperty(document, 'visibilityState', {
       get: function () {
         return cachedVisibilityState
       }

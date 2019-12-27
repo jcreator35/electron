@@ -4,42 +4,17 @@ The Electron team is currently undergoing an initiative to convert separate gett
 
 ## Candidates
 
-* `app` module
-  * `dock`
-    * `badge`
-* `autoUpdater` module
-  * `feedUrl`
 * `BrowserWindow`
   * `fullscreen`
   * `simpleFullscreen`
-  * `movable`
-  * `resizable`
-  * `maximizable`
-  * `minimizable`
-  * `fullscreenable`
-  * `closable`
   * `alwaysOnTop`
   * `title`
   * `documentEdited`
   * `hasShadow`
-  * `autohideMenuBar`
   * `menubarVisible`
   * `visibleOnAllWorkspaces`
 * `crashReporter` module
   * `uploadToServer`
-* `DownloadItem` class
-  * `savePath`
-  * `paused`
-* `Session` module
-  * `preloads`
-* `SystemPreferences` module
-  * `appLevelAppearance`
-* `webContents` module
-  * `zoomFactor`
-  * `zoomLevel`
-  * `audioMuted`
-  * `userAgent`
-  * `frameRate`
 * `webFrame` modules
   * `zoomFactor`
   * `zoomLevel`
@@ -56,5 +31,23 @@ The Electron team is currently undergoing an initiative to convert separate gett
   * `applicationMenu`
   * `badgeCount`
   * `name`
+* `DownloadItem` class
+  * `savePath`
+* `BrowserWindow` module
+  * `autohideMenuBar`
+  * `resizable`
+  * `maximizable`
+  * `minimizable`
+  * `fullscreenable`
+  * `movable`
+  * `closable`
 * `NativeImage`
   * `isMacTemplateImage`
+* `SystemPreferences` module
+  * `appLevelAppearance`
+* `webContents` module
+  * `audioMuted`
+  * `frameRate`
+  * `userAgent`
+  * `zoomFactor`
+  * `zoomLevel`

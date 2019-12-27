@@ -1,5 +1,4 @@
 import { EventEmitter } from 'events'
-import * as fs from 'fs'
 import * as path from 'path'
 
 const Module = require('module')
@@ -14,6 +13,10 @@ const Module = require('module')
 // code, which does not work with this hack. However by modifying the
 // "Module.wrapper" we can force Node to use the old code path to wrap module
 // code with JavaScript.
+//
+// Note 3: We provide the equivalent extra variables internally through the
+// webpack ProvidePlugin in webpack.config.base.js.  If you add any extra
+// variables to this wrapper please ensure to update that plugin as well.
 Module.wrapper = [
   '(function (exports, require, module, __filename, __dirname, process, global, Buffer) { ' +
   // By running the code in a new closure, it would be possible for the module
@@ -33,11 +36,6 @@ require('../common/reset-search-paths')
 // Import common settings.
 require('@electron/internal/common/init')
 
-const globalPaths = Module.globalPaths
-
-// Expose public APIs.
-globalPaths.push(path.join(__dirname, 'api', 'exports'))
-
 // The global variable will be used by ipc for event dispatching
 const v8Util = process.electronBinding('v8_util')
 
@@ -55,6 +53,7 @@ v8Util.setHiddenValue(global, 'ipcNative', {
 
 // Use electron module after everything is ready.
 const { ipcRendererInternal } = require('@electron/internal/renderer/ipc-renderer-internal')
+const ipcRendererUtils = require('@electron/internal/renderer/ipc-renderer-internal-utils')
 const { webFrameInit } = require('@electron/internal/renderer/web-frame-init')
 webFrameInit()
 
@@ -94,14 +93,16 @@ if (preloadScript) {
 }
 
 switch (window.location.protocol) {
-  case 'chrome-devtools:': {
+  case 'devtools:': {
     // Override some inspector APIs.
     require('@electron/internal/renderer/inspector')
     break
   }
   case 'chrome-extension:': {
     // Inject the chrome.* APIs that chrome extensions require
-    require('@electron/internal/renderer/chrome-api').injectTo(window.location.hostname, window)
+    if (!process.electronBinding('features').isExtensionsEnabled()) {
+      require('@electron/internal/renderer/chrome-api').injectTo(window.location.hostname, window)
+    }
     break
   }
   case 'chrome:':
@@ -112,7 +113,10 @@ switch (window.location.protocol) {
     windowSetup(guestInstanceId, openerId, isHiddenPage, usesNativeWindowOpen)
 
     // Inject content scripts.
-    require('@electron/internal/renderer/content-scripts-injector')(process.getRenderProcessPreferences)
+    if (!process.electronBinding('features').isExtensionsEnabled()) {
+      const contentScripts = ipcRendererUtils.invokeSync('ELECTRON_GET_CONTENT_SCRIPTS') as Electron.ContentScriptEntry[]
+      require('@electron/internal/renderer/content-scripts-injector')(contentScripts)
+    }
   }
 }
 
@@ -129,8 +133,9 @@ if (contextIsolation) {
 
 if (nodeIntegration) {
   // Export node bindings to global.
-  global.require = require
-  global.module = module
+  const { makeRequireFunction } = __non_webpack_require__('internal/modules/cjs/helpers') // eslint-disable-line
+  global.module = new Module('electron/js2c/renderer_init')
+  global.require = makeRequireFunction(global.module)
 
   // Set the __filename to the path of html file if it is file: protocol.
   if (window.location.protocol === 'file:') {
@@ -140,7 +145,7 @@ if (nodeIntegration) {
     if (process.platform === 'win32') {
       if (pathname[0] === '/') pathname = pathname.substr(1)
 
-      const isWindowsNetworkSharePath = location.hostname.length > 0 && globalPaths[0].startsWith('\\')
+      const isWindowsNetworkSharePath = location.hostname.length > 0 && process.resourcesPath.startsWith('\\')
       if (isWindowsNetworkSharePath) {
         pathname = `//${location.host}/${pathname}`
       }
@@ -150,17 +155,18 @@ if (nodeIntegration) {
     global.__dirname = path.dirname(global.__filename)
 
     // Set module's filename so relative require can work as expected.
-    module.filename = global.__filename
+    global.module.filename = global.__filename
 
     // Also search for module under the html file.
-    module.paths = module.paths.concat(Module._nodeModulePaths(global.__dirname))
+    global.module.paths = Module._nodeModulePaths(global.__dirname)
   } else {
-    global.__filename = __filename
-    global.__dirname = __dirname
+    // For backwards compatibility we fake these two paths here
+    global.__filename = path.join(process.resourcesPath, 'electron.asar', 'renderer', 'init.js')
+    global.__dirname = path.join(process.resourcesPath, 'electron.asar', 'renderer')
 
     if (appPath) {
       // Search for module under the app directory
-      module.paths = module.paths.concat(Module._nodeModulePaths(appPath))
+      global.module.paths = Module._nodeModulePaths(appPath)
     }
   }
 
@@ -177,39 +183,30 @@ if (nodeIntegration) {
     }
   }
 } else {
-  // Delete Node's symbols after the Environment has been loaded.
-  process.once('loaded', function () {
-    delete global.process
-    delete global.Buffer
-    delete global.setImmediate
-    delete global.clearImmediate
-    delete global.global
-  })
-}
-
-const errorUtils = require('@electron/internal/common/error-utils')
-const { isParentDir } = require('@electron/internal/common/path-utils')
-
-let absoluteAppPath: string
-const getAppPath = function () {
-  if (absoluteAppPath === undefined) {
-    absoluteAppPath = fs.realpathSync(appPath!)
+  // Delete Node's symbols after the Environment has been loaded in a
+  // non context-isolated environment
+  if (!contextIsolation) {
+    process.once('loaded', function () {
+      delete global.process
+      delete global.Buffer
+      delete global.setImmediate
+      delete global.clearImmediate
+      delete global.global
+      delete global.root
+      delete global.GLOBAL
+    })
   }
-  return absoluteAppPath
 }
 
 // Load the preload scripts.
 for (const preloadScript of preloadScripts) {
   try {
-    if (!isParentDir(getAppPath(), fs.realpathSync(preloadScript))) {
-      throw new Error('Preload scripts outside of app path are not allowed')
-    }
-    require(preloadScript)
+    Module._load(preloadScript)
   } catch (error) {
     console.error(`Unable to load preload script: ${preloadScript}`)
-    console.error(`${error}`)
+    console.error(error)
 
-    ipcRendererInternal.send('ELECTRON_BROWSER_PRELOAD_ERROR', preloadScript, errorUtils.serialize(error))
+    ipcRendererInternal.send('ELECTRON_BROWSER_PRELOAD_ERROR', preloadScript, error)
   }
 }
 
