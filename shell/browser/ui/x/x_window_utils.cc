@@ -4,66 +4,47 @@
 
 #include "shell/browser/ui/x/x_window_utils.h"
 
-#include <X11/Xatom.h>
 #include <memory>
 
 #include "base/environment.h"
 #include "base/strings/string_util.h"
-#include "base/threading/thread_restrictions.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
 #include "dbus/object_proxy.h"
+#include "shell/common/thread_restrictions.h"
 #include "ui/base/x/x11_util.h"
+#include "ui/gfx/x/atom_cache.h"
+#include "ui/gfx/x/connection.h"
+#include "ui/gfx/x/xproto.h"
 
 namespace electron {
 
-::Atom GetAtom(const char* name) {
-  return XInternAtom(gfx::GetXDisplay(), name, false);
-}
-
-void SetWMSpecState(::Window xwindow, bool enabled, ::Atom state) {
-  XEvent xclient;
-  memset(&xclient, 0, sizeof(xclient));
-  xclient.type = ClientMessage;
-  xclient.xclient.window = xwindow;
-  xclient.xclient.message_type = GetAtom("_NET_WM_STATE");
-  xclient.xclient.format = 32;
-  xclient.xclient.data.l[0] = enabled ? 1 : 0;
-  xclient.xclient.data.l[1] = state;
-  xclient.xclient.data.l[2] = x11::None;
-  xclient.xclient.data.l[3] = 1;
-  xclient.xclient.data.l[4] = 0;
-
-  XDisplay* xdisplay = gfx::GetXDisplay();
-  XSendEvent(xdisplay, DefaultRootWindow(xdisplay), x11::False,
-             SubstructureRedirectMask | SubstructureNotifyMask, &xclient);
-}
-
-void SetWindowType(::Window xwindow, const std::string& type) {
-  XDisplay* xdisplay = gfx::GetXDisplay();
+void SetWindowType(x11::Window window, const std::string& type) {
   std::string type_prefix = "_NET_WM_WINDOW_TYPE_";
-  ::Atom window_type = XInternAtom(
-      xdisplay, (type_prefix + base::ToUpperASCII(type)).c_str(), x11::False);
-  XChangeProperty(xdisplay, xwindow,
-                  XInternAtom(xdisplay, "_NET_WM_WINDOW_TYPE", x11::False),
-                  XA_ATOM, 32, PropModeReplace,
-                  reinterpret_cast<unsigned char*>(&window_type), 1);
+  std::string window_type_str = type_prefix + base::ToUpperASCII(type);
+  x11::Atom window_type = x11::GetAtom(window_type_str.c_str());
+  auto* connection = x11::Connection::Get();
+  connection->SetProperty(window, x11::GetAtom("_NET_WM_WINDOW_TYPE"),
+                          x11::Atom::ATOM, window_type);
 }
 
 bool ShouldUseGlobalMenuBar() {
-  base::ThreadRestrictions::ScopedAllowIO allow_io;
-  std::unique_ptr<base::Environment> env(base::Environment::Create());
+  ScopedAllowBlockingForElectron allow_blocking;
+  auto env = base::Environment::Create();
   if (env->HasVar("ELECTRON_FORCE_WINDOW_MENU_BAR"))
     return false;
 
   dbus::Bus::Options options;
-  scoped_refptr<dbus::Bus> bus(new dbus::Bus(options));
+  auto bus = base::MakeRefCounted<dbus::Bus>(options);
 
   dbus::ObjectProxy* object_proxy =
       bus->GetObjectProxy(DBUS_SERVICE_DBUS, dbus::ObjectPath(DBUS_PATH_DBUS));
   dbus::MethodCall method_call(DBUS_INTERFACE_DBUS, "ListNames");
-  std::unique_ptr<dbus::Response> response(object_proxy->CallMethodAndBlock(
-      &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT));
+  std::unique_ptr<dbus::Response> response =
+      object_proxy
+          ->CallMethodAndBlock(&method_call,
+                               dbus::ObjectProxy::TIMEOUT_USE_DEFAULT)
+          .value_or(nullptr);
   if (!response) {
     bus->ShutdownAndBlock();
     return false;
@@ -88,34 +69,20 @@ bool ShouldUseGlobalMenuBar() {
   return false;
 }
 
-void MoveWindowToForeground(::Window xwindow) {
-  MoveWindowAbove(xwindow, 0);
+void MoveWindowToForeground(x11::Window window) {
+  MoveWindowAbove(window, static_cast<x11::Window>(0));
 }
 
-void MoveWindowAbove(::Window xwindow, ::Window other_xwindow) {
-  XDisplay* xdisplay = gfx::GetXDisplay();
-  XEvent xclient;
-  memset(&xclient, 0, sizeof(xclient));
-
-  xclient.type = ClientMessage;
-  xclient.xclient.display = xdisplay;
-  xclient.xclient.window = xwindow;
-  xclient.xclient.message_type = GetAtom("_NET_RESTACK_WINDOW");
-  xclient.xclient.format = 32;
-  xclient.xclient.data.l[0] = 2;
-  xclient.xclient.data.l[1] = other_xwindow;
-  xclient.xclient.data.l[2] = Above;
-  xclient.xclient.data.l[3] = 0;
-  xclient.xclient.data.l[4] = 0;
-
-  XSendEvent(xdisplay, DefaultRootWindow(xdisplay), x11::False,
-             SubstructureRedirectMask | SubstructureNotifyMask, &xclient);
-  XFlush(xdisplay);
+void MoveWindowAbove(x11::Window window, x11::Window other_window) {
+  ui::SendClientMessage(window, ui::GetX11RootWindow(),
+                        x11::GetAtom("_NET_RESTACK_WINDOW"),
+                        {2, static_cast<uint32_t>(other_window),
+                         static_cast<uint32_t>(x11::StackMode::Above), 0, 0});
 }
 
-bool IsWindowValid(::Window xwindow) {
-  XWindowAttributes attrs;
-  return XGetWindowAttributes(gfx::GetXDisplay(), xwindow, &attrs);
+bool IsWindowValid(x11::Window window) {
+  auto* conn = x11::Connection::Get();
+  return conn->GetWindowAttributes({window}).Sync();
 }
 
 }  // namespace electron

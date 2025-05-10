@@ -2,13 +2,11 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_WINDOW_LIST_H_
-#define SHELL_BROWSER_WINDOW_LIST_H_
+#ifndef ELECTRON_SHELL_BROWSER_WINDOW_LIST_H_
+#define ELECTRON_SHELL_BROWSER_WINDOW_LIST_H_
 
 #include <vector>
 
-#include "base/lazy_instance.h"
-#include "base/macros.h"
 #include "base/observer_list.h"
 
 namespace electron {
@@ -18,6 +16,10 @@ class WindowListObserver;
 
 class WindowList {
  public:
+  // disable copy
+  WindowList(const WindowList&) = delete;
+  WindowList& operator=(const WindowList&) = delete;
+
   typedef std::vector<NativeWindow*> WindowVector;
 
   static WindowVector GetWindows();
@@ -46,19 +48,16 @@ class WindowList {
   WindowList();
   ~WindowList();
 
+  // A list of observers which will be notified of every window addition and
+  // removal across all WindowLists.
+  [[nodiscard]] static base::ObserverList<WindowListObserver>& GetObservers();
+
   // A vector of the windows in this list, in the order they were added.
   WindowVector windows_;
 
-  // A list of observers which will be notified of every window addition and
-  // removal across all WindowLists.
-  static base::LazyInstance<base::ObserverList<WindowListObserver>>::Leaky
-      observers_;
-
   static WindowList* instance_;
-
-  DISALLOW_COPY_AND_ASSIGN(WindowList);
 };
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_WINDOW_LIST_H_
+#endif  // ELECTRON_SHELL_BROWSER_WINDOW_LIST_H_

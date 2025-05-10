@@ -1,5 +1,6 @@
 // Modules to control application life and create native browser window
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron/main')
+const path = require('node:path')
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -11,7 +12,7 @@ function createWindow () {
     width: 800,
     height: 600,
     webPreferences: {
-      nodeIntegration: true
+      preload: path.join(__dirname, 'preload.js')
     }
   })
 
@@ -28,16 +29,22 @@ function createWindow () {
     // when you should delete the corresponding element.
     mainWindow = null
   })
+
+  // Open external links in the default browser
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault()
+    shell.openExternal(url)
+  })
 }
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', createWindow)
+app.whenReady().then(createWindow)
 
 // Quit when all windows are closed.
 app.on('window-all-closed', function () {
-  // On OS X it is common for applications and their menu bar
+  // On macOS it is common for applications and their menu bar
   // to stay active until the user quits explicitly with Cmd + Q
   if (process.platform !== 'darwin') {
     app.quit()
@@ -45,25 +52,18 @@ app.on('window-all-closed', function () {
 })
 
 app.on('activate', function () {
-  // On OS X it's common to re-create a window in the app when the
+  // On macOS it is common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (mainWindow === null) {
     createWindow()
   }
 })
 
-
-ipcMain.on('open-file-dialog', event => {
-  dialog.showOpenDialog(
-    {
-      properties: ['openFile', 'openDirectory']
-    },
-    files => {
-      if (files) {
-        event.sender.send('selected-directory', files)
-      }
-    }
-  )
+ipcMain.handle('open-file-dialog', async () => {
+  const options = {
+    properties: ['openFile', 'openDirectory']
+  }
+  return (await dialog.showOpenDialog(options)).filePaths
 })
 
 // In this file you can include the rest of your app's specific main process

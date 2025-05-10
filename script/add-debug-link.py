@@ -1,31 +1,27 @@
-#!/usr/bin/env python
-from __future__ import print_function
+#!/usr/bin/env python3
+
 import argparse
 import os
 import sys
 
-from lib.config import LINUX_BINARIES, PLATFORM
-from lib.util import execute, get_objcopy_path, get_out_dir
+from lib.config import PLATFORM
+from lib.util import execute, get_linux_binaries, get_out_dir
 
 def add_debug_link_into_binaries(directory, target_cpu, debug_dir):
-  for binary in LINUX_BINARIES:
+  for binary in get_linux_binaries():
     binary_path = os.path.join(directory, binary)
     if os.path.isfile(binary_path):
       add_debug_link_into_binary(binary_path, target_cpu, debug_dir)
 
 def add_debug_link_into_binary(binary_path, target_cpu, debug_dir):
-  try:
-    objcopy = get_objcopy_path(target_cpu)
-  except:
-    if PLATFORM == 'linux' and (target_cpu == 'x86' or target_cpu == 'arm' or
-       target_cpu == 'arm64'):
-      # Skip because no objcopy binary on the given target.
-      return
-    raise
+  if PLATFORM == 'linux' and target_cpu in ('x86', 'arm', 'arm64'):
+    # Skip because no objcopy binary on the given target.
+    return
+
   debug_name = get_debug_name(binary_path)
   # Make sure the path to the binary is not relative because of cwd param.
   real_binary_path = os.path.realpath(binary_path)
-  cmd = [objcopy, '--add-gnu-debuglink=' + debug_name, real_binary_path]
+  cmd = ['objcopy', '--add-gnu-debuglink=' + debug_name, real_binary_path]
   execute(cmd, cwd=debug_dir)
 
 def get_debug_name(binary_path):

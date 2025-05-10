@@ -5,6 +5,7 @@
 #include "shell/browser/mac/dict_util.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/json/json_writer.h"
 #include "base/strings/sys_string_conversions.h"
@@ -12,11 +13,11 @@
 
 namespace electron {
 
-NSArray* ListValueToNSArray(const base::ListValue& value) {
-  std::string json;
-  if (!base::JSONWriter::Write(value, &json))
+NSArray* ListValueToNSArray(const base::Value::List& value) {
+  const auto json = base::WriteJson(value);
+  if (!json.has_value())
     return nil;
-  NSData* jsonData = [NSData dataWithBytes:json.c_str() length:json.length()];
+  NSData* jsonData = [NSData dataWithBytes:json->data() length:json->size()];
   id obj = [NSJSONSerialization JSONObjectWithData:jsonData
                                            options:0
                                              error:nil];
@@ -25,42 +26,39 @@ NSArray* ListValueToNSArray(const base::ListValue& value) {
   return obj;
 }
 
-base::ListValue NSArrayToListValue(NSArray* arr) {
-  base::ListValue result;
+base::Value::List NSArrayToValue(NSArray* arr) {
+  base::Value::List result;
   if (!arr)
     return result;
 
   for (id value in arr) {
     if ([value isKindOfClass:[NSString class]]) {
-      result.AppendString(base::SysNSStringToUTF8(value));
+      result.Append(base::SysNSStringToUTF8(value));
     } else if ([value isKindOfClass:[NSNumber class]]) {
-      const char* objc_type = [value objCType];
-      if (strcmp(objc_type, @encode(BOOL)) == 0 ||
-          strcmp(objc_type, @encode(char)) == 0)
-        result.AppendBoolean([value boolValue]);
-      else if (strcmp(objc_type, @encode(double)) == 0 ||
-               strcmp(objc_type, @encode(float)) == 0)
-        result.AppendDouble([value doubleValue]);
+      const std::string_view objc_type = [value objCType];
+      if (objc_type == @encode(BOOL) || objc_type == @encode(char))
+        result.Append([value boolValue]);
+      else if (objc_type == @encode(double) || objc_type == @encode(float))
+        result.Append([value doubleValue]);
       else
-        result.AppendInteger([value intValue]);
+        result.Append([value intValue]);
     } else if ([value isKindOfClass:[NSArray class]]) {
-      result.Append(NSArrayToListValue(value));
+      result.Append(NSArrayToValue(value));
     } else if ([value isKindOfClass:[NSDictionary class]]) {
-      result.Append(NSDictionaryToDictionaryValue(value));
+      result.Append(NSDictionaryToValue(value));
     } else {
-      result.AppendString(base::SysNSStringToUTF8([value description]));
+      result.Append(base::SysNSStringToUTF8([value description]));
     }
   }
 
   return result;
 }
 
-NSDictionary* DictionaryValueToNSDictionary(
-    const base::DictionaryValue& value) {
-  std::string json;
-  if (!base::JSONWriter::Write(value, &json))
+NSDictionary* DictionaryValueToNSDictionary(const base::Value::Dict& value) {
+  const auto json = base::WriteJson(value);
+  if (!json.has_value())
     return nil;
-  NSData* jsonData = [NSData dataWithBytes:json.c_str() length:json.length()];
+  NSData* jsonData = [NSData dataWithBytes:json->data() length:json->size()];
   id obj = [NSJSONSerialization JSONObjectWithData:jsonData
                                            options:0
                                              error:nil];
@@ -69,8 +67,8 @@ NSDictionary* DictionaryValueToNSDictionary(
   return obj;
 }
 
-base::DictionaryValue NSDictionaryToDictionaryValue(NSDictionary* dict) {
-  base::DictionaryValue result;
+base::Value::Dict NSDictionaryToValue(NSDictionary* dict) {
+  base::Value::Dict result;
   if (!dict)
     return result;
 
@@ -80,24 +78,22 @@ base::DictionaryValue NSDictionaryToDictionaryValue(NSDictionary* dict) {
 
     id value = [dict objectForKey:key];
     if ([value isKindOfClass:[NSString class]]) {
-      result.SetKey(str_key, base::Value(base::SysNSStringToUTF8(value)));
+      result.Set(str_key, base::Value(base::SysNSStringToUTF8(value)));
     } else if ([value isKindOfClass:[NSNumber class]]) {
-      const char* objc_type = [value objCType];
-      if (strcmp(objc_type, @encode(BOOL)) == 0 ||
-          strcmp(objc_type, @encode(char)) == 0)
-        result.SetKey(str_key, base::Value([value boolValue]));
-      else if (strcmp(objc_type, @encode(double)) == 0 ||
-               strcmp(objc_type, @encode(float)) == 0)
-        result.SetKey(str_key, base::Value([value doubleValue]));
+      const std::string_view objc_type = [value objCType];
+      if (objc_type == @encode(BOOL) || objc_type == @encode(char))
+        result.Set(str_key, base::Value([value boolValue]));
+      else if (objc_type == @encode(double) || objc_type == @encode(float))
+        result.Set(str_key, base::Value([value doubleValue]));
       else
-        result.SetKey(str_key, base::Value([value intValue]));
+        result.Set(str_key, base::Value([value intValue]));
     } else if ([value isKindOfClass:[NSArray class]]) {
-      result.SetKey(str_key, NSArrayToListValue(value));
+      result.Set(str_key, NSArrayToValue(value));
     } else if ([value isKindOfClass:[NSDictionary class]]) {
-      result.SetKey(str_key, NSDictionaryToDictionaryValue(value));
+      result.Set(str_key, NSDictionaryToValue(value));
     } else {
-      result.SetKey(str_key,
-                    base::Value(base::SysNSStringToUTF8([value description])));
+      result.Set(str_key,
+                 base::Value(base::SysNSStringToUTF8([value description])));
     }
   }
 

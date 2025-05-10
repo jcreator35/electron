@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE.chromium file.
 
-#ifndef SHELL_COMMON_GIN_HELPER_WRAPPABLE_BASE_H_
-#define SHELL_COMMON_GIN_HELPER_WRAPPABLE_BASE_H_
+#ifndef ELECTRON_SHELL_COMMON_GIN_HELPER_WRAPPABLE_BASE_H_
+#define ELECTRON_SHELL_COMMON_GIN_HELPER_WRAPPABLE_BASE_H_
 
-#include "v8/include/v8.h"
+#include "base/memory/raw_ptr.h"
+#include "v8/include/v8-forward.h"
 
 namespace gin {
 class Arguments;
-}  // namespace gin
+}
 
 namespace gin_helper {
 
@@ -32,19 +33,17 @@ namespace gin_helper {
 class WrappableBase {
  public:
   WrappableBase();
+  WrappableBase(const WrappableBase&) = delete;
+  WrappableBase& operator=(const WrappableBase&) = delete;
   virtual ~WrappableBase();
 
-  // Retrieve the v8 wrapper object cooresponding to this object.
+  // Retrieve the v8 wrapper object corresponding to this object.
   v8::Local<v8::Object> GetWrapper() const;
-  v8::MaybeLocal<v8::Object> GetWrapper(v8::Isolate* isolate) const;
 
   // Returns the Isolate this object is created in.
   v8::Isolate* isolate() const { return isolate_; }
 
  protected:
-  // Called after the "_init" method gets called in JavaScript.
-  virtual void AfterInit(v8::Isolate* isolate) {}
-
   // Bind the C++ class to the JS wrapper.
   // This method should only be called by classes using Constructor.
   virtual void InitWith(v8::Isolate* isolate, v8::Local<v8::Object> wrapper);
@@ -52,18 +51,17 @@ class WrappableBase {
   // Helper to init with arguments.
   void InitWithArgs(gin::Arguments* args);
 
+  v8::Global<v8::Object> wrapper_;  // Weak
+
  private:
   static void FirstWeakCallback(
       const v8::WeakCallbackInfo<WrappableBase>& data);
   static void SecondWeakCallback(
       const v8::WeakCallbackInfo<WrappableBase>& data);
 
-  v8::Isolate* isolate_ = nullptr;
-  v8::Global<v8::Object> wrapper_;  // Weak
-
-  DISALLOW_COPY_AND_ASSIGN(WrappableBase);
+  raw_ptr<v8::Isolate> isolate_ = nullptr;
 };
 
 }  // namespace gin_helper
 
-#endif  // SHELL_COMMON_GIN_HELPER_WRAPPABLE_BASE_H_
+#endif  // ELECTRON_SHELL_COMMON_GIN_HELPER_WRAPPABLE_BASE_H_

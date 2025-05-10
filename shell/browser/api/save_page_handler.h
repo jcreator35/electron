@@ -2,16 +2,15 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_API_SAVE_PAGE_HANDLER_H_
-#define SHELL_BROWSER_API_SAVE_PAGE_HANDLER_H_
+#ifndef ELECTRON_SHELL_BROWSER_API_SAVE_PAGE_HANDLER_H_
+#define ELECTRON_SHELL_BROWSER_API_SAVE_PAGE_HANDLER_H_
 
-#include <string>
-
+#include "base/memory/raw_ptr.h"
 #include "components/download/public/common/download_item.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/save_page_type.h"
 #include "shell/common/gin_helper/promise.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-forward.h"
 
 namespace base {
 class FilePath;
@@ -21,13 +20,11 @@ namespace content {
 class WebContents;
 }
 
-namespace electron {
-
-namespace api {
+namespace electron::api {
 
 // A self-destroyed class for handling save page request.
-class SavePageHandler : public content::DownloadManager::Observer,
-                        public download::DownloadItem::Observer {
+class SavePageHandler : private content::DownloadManager::Observer,
+                        private download::DownloadItem::Observer {
  public:
   SavePageHandler(content::WebContents* web_contents,
                   gin_helper::Promise<void> promise);
@@ -46,12 +43,10 @@ class SavePageHandler : public content::DownloadManager::Observer,
   // download::DownloadItem::Observer:
   void OnDownloadUpdated(download::DownloadItem* item) override;
 
-  content::WebContents* web_contents_;  // weak
+  raw_ptr<content::WebContents> web_contents_;  // weak
   gin_helper::Promise<void> promise_;
 };
 
-}  // namespace api
+}  // namespace electron::api
 
-}  // namespace electron
-
-#endif  // SHELL_BROWSER_API_SAVE_PAGE_HANDLER_H_
+#endif  // ELECTRON_SHELL_BROWSER_API_SAVE_PAGE_HANDLER_H_

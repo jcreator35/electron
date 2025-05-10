@@ -2,32 +2,37 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_COOKIE_CHANGE_NOTIFIER_H_
-#define SHELL_BROWSER_COOKIE_CHANGE_NOTIFIER_H_
-
-#include <memory>
+#ifndef ELECTRON_SHELL_BROWSER_COOKIE_CHANGE_NOTIFIER_H_
+#define ELECTRON_SHELL_BROWSER_COOKIE_CHANGE_NOTIFIER_H_
 
 #include "base/callback_list.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "mojo/public/cpp/bindings/receiver.h"
-#include "net/cookies/cookie_change_dispatcher.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
+
+namespace net {
+class CoookieChangeInfo;
+class CookieChangeNotifier;
+}  // namespace net
 
 namespace electron {
 
-class AtomBrowserContext;
+class ElectronBrowserContext;
 
 // Sends cookie-change notifications on the UI thread.
-class CookieChangeNotifier : public network::mojom::CookieChangeListener {
+class CookieChangeNotifier : private network::mojom::CookieChangeListener {
  public:
-  explicit CookieChangeNotifier(AtomBrowserContext* browser_context);
+  explicit CookieChangeNotifier(ElectronBrowserContext* browser_context);
   ~CookieChangeNotifier() override;
 
+  // disable copy
+  CookieChangeNotifier(const CookieChangeNotifier&) = delete;
+  CookieChangeNotifier& operator=(const CookieChangeNotifier&) = delete;
+
   // Register callbacks that needs to notified on any cookie store changes.
-  std::unique_ptr<base::CallbackList<
-      void(const net::CookieChangeInfo& change)>::Subscription>
-  RegisterCookieChangeCallback(
-      const base::Callback<void(const net::CookieChangeInfo& change)>& cb);
+  base::CallbackListSubscription RegisterCookieChangeCallback(
+      const base::RepeatingCallback<void(const net::CookieChangeInfo& change)>&
+          cb);
 
  private:
   void StartListening();
@@ -36,15 +41,13 @@ class CookieChangeNotifier : public network::mojom::CookieChangeListener {
   // network::mojom::CookieChangeListener implementation.
   void OnCookieChange(const net::CookieChangeInfo& change) override;
 
-  AtomBrowserContext* browser_context_;
-  base::CallbackList<void(const net::CookieChangeInfo& change)>
+  raw_ptr<ElectronBrowserContext> browser_context_;
+  base::RepeatingCallbackList<void(const net::CookieChangeInfo& change)>
       cookie_change_sub_list_;
 
   mojo::Receiver<network::mojom::CookieChangeListener> receiver_;
-
-  DISALLOW_COPY_AND_ASSIGN(CookieChangeNotifier);
 };
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_COOKIE_CHANGE_NOTIFIER_H_
+#endif  // ELECTRON_SHELL_BROWSER_COOKIE_CHANGE_NOTIFIER_H_

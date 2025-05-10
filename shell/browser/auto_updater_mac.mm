@@ -6,12 +6,12 @@
 
 #include <string>
 
-#import <ReactiveCocoa/NSObject+RACPropertySubscribing.h>
-#import <ReactiveCocoa/RACCommand.h>
-#import <ReactiveCocoa/RACSignal.h>
+#import <ReactiveObjC/NSObject+RACPropertySubscribing.h>
+#import <ReactiveObjC/RACCommand.h>
+#import <ReactiveObjC/RACSignal.h>
 #import <Squirrel/Squirrel.h>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/time/time.h"
 #include "gin/arguments.h"
@@ -24,8 +24,8 @@ namespace auto_updater {
 
 namespace {
 
-// The gloal SQRLUpdater object.
-SQRLUpdater* g_updater = nil;
+// The global SQRLUpdater object.
+SQRLUpdater* __strong g_updater = nil;
 
 }  // namespace
 
@@ -41,14 +41,19 @@ std::string AutoUpdater::GetFeedURL() {
 }
 
 // static
-void AutoUpdater::SetFeedURL(gin_helper::Arguments* args) {
+void AutoUpdater::SetFeedURL(gin::Arguments* args) {
   gin_helper::ErrorThrower thrower(args->isolate());
   gin_helper::Dictionary opts;
 
   std::string feed;
   HeaderMap requestHeaders;
   std::string serverType = "default";
-  if (args->GetNext(&opts)) {
+  v8::Local<v8::Value> first_arg = args->PeekNext();
+  if (!first_arg.IsEmpty() && first_arg->IsString()) {
+    if (args->GetNext(&feed)) {
+      args->GetNext(&requestHeaders);
+    }
+  } else if (args->GetNext(&opts)) {
     if (!opts.Get("url", &feed)) {
       thrower.ThrowError(
           "Expected options object to contain a 'url' string property in "
@@ -61,8 +66,6 @@ void AutoUpdater::SetFeedURL(gin_helper::Arguments* args) {
       thrower.ThrowError("Expected serverType to be 'default' or 'json'");
       return;
     }
-  } else if (args->GetNext(&feed)) {
-    args->GetNext(&requestHeaders);
   } else {
     thrower.ThrowError(
         "Expected an options object with a 'url' property to be provided");
@@ -84,7 +87,7 @@ void AutoUpdater::SetFeedURL(gin_helper::Arguments* args) {
   }
 
   if (g_updater)
-    [g_updater release];
+    g_updater = nil;
 
   // Initialize the SQRLUpdater.
   @try {
@@ -135,7 +138,8 @@ void AutoUpdater::CheckForUpdates() {
           delegate->OnUpdateDownloaded(
               base::SysNSStringToUTF8(update.releaseNotes),
               base::SysNSStringToUTF8(update.releaseName),
-              base::Time::FromDoubleT(update.releaseDate.timeIntervalSince1970),
+              base::Time::FromSecondsSinceUnixEpoch(
+                  update.releaseDate.timeIntervalSince1970),
               base::SysNSStringToUTF8(update.updateURL.absoluteString));
         } else {
           g_update_available = false;
@@ -174,6 +178,13 @@ void AutoUpdater::QuitAndInstall() {
     if (delegate)
       delegate->OnError("No update available, can't quit and install");
   }
+}
+
+bool AutoUpdater::IsVersionAllowedForUpdate(const std::string& current_version,
+                                            const std::string& target_version) {
+  return [SQRLUpdater
+      isVersionAllowedForUpdate:base::SysUTF8ToNSString(target_version)
+                           from:base::SysUTF8ToNSString(current_version)];
 }
 
 }  // namespace auto_updater

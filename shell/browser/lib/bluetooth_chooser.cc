@@ -14,7 +14,7 @@ struct Converter<electron::BluetoothChooser::DeviceInfo> {
   static v8::Local<v8::Value> ToV8(
       v8::Isolate* isolate,
       const electron::BluetoothChooser::DeviceInfo& val) {
-    gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+    auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
     dict.Set("deviceName", val.device_name);
     dict.Set("deviceId", val.device_id);
     return gin::ConvertToV8(isolate, dict);
@@ -25,104 +25,116 @@ struct Converter<electron::BluetoothChooser::DeviceInfo> {
 
 namespace electron {
 
-namespace {
-
-const int kMaxScanRetries = 5;
-
-void OnDeviceChosen(const content::BluetoothChooser::EventHandler& handler,
-                    const std::string& device_id) {
-  if (device_id.empty()) {
-    handler.Run(content::BluetoothChooser::Event::CANCELLED, device_id);
-  } else {
-    handler.Run(content::BluetoothChooser::Event::SELECTED, device_id);
-  }
-}
-
-}  // namespace
-
 BluetoothChooser::BluetoothChooser(api::WebContents* contents,
                                    const EventHandler& event_handler)
     : api_web_contents_(contents), event_handler_(event_handler) {}
 
-BluetoothChooser::~BluetoothChooser() = default;
+BluetoothChooser::~BluetoothChooser() {
+  event_handler_.Reset();
+}
 
 void BluetoothChooser::SetAdapterPresence(AdapterPresence presence) {
   switch (presence) {
     case AdapterPresence::ABSENT:
+      NOTREACHED();
     case AdapterPresence::POWERED_OFF:
-      event_handler_.Run(Event::CANCELLED, "");
+      event_handler_.Run(content::BluetoothChooserEvent::CANCELLED, "");
+      break;
+    case AdapterPresence::UNAUTHORIZED:
+      event_handler_.Run(content::BluetoothChooserEvent::DENIED_PERMISSION, "");
       break;
     case AdapterPresence::POWERED_ON:
+      rescan_ = true;
       break;
   }
 }
 
 void BluetoothChooser::ShowDiscoveryState(DiscoveryState state) {
+  bool idle_state = false;
   switch (state) {
     case DiscoveryState::FAILED_TO_START:
-      event_handler_.Run(Event::CANCELLED, "");
-      break;
+      refreshing_ = false;
+      event_handler_.Run(content::BluetoothChooserEvent::CANCELLED, "");
+      return;
     case DiscoveryState::IDLE:
-      if (device_map_.empty()) {
-        auto event =
-            ++num_retries_ > kMaxScanRetries ? Event::CANCELLED : Event::RESCAN;
-        event_handler_.Run(event, "");
+      refreshing_ = false;
+      idle_state = true;
+      break;
+    // The first time this state fires is due to a rescan triggering so we
+    // set a flag to ignore devices - the second time this state fires
+    // we are now safe to pick a device.
+    case DiscoveryState::DISCOVERING:
+      if (rescan_ && !refreshing_) {
+        refreshing_ = true;
       } else {
-        bool prevent_default = api_web_contents_->Emit(
-            "select-bluetooth-device", GetDeviceList(),
-            base::BindOnce(&OnDeviceChosen, event_handler_));
-        if (!prevent_default) {
-          auto it = device_map_.begin();
-          auto device_id = it->first;
-          event_handler_.Run(Event::SELECTED, device_id);
-        }
+        refreshing_ = false;
       }
       break;
-    case DiscoveryState::DISCOVERING:
-      break;
+  }
+
+  bool prevent_default =
+      api_web_contents_->Emit("select-bluetooth-device", GetDeviceList(),
+                              base::BindOnce(&BluetoothChooser::OnDeviceChosen,
+                                             weak_ptr_factory_.GetWeakPtr()));
+  if (!prevent_default && idle_state) {
+    if (device_id_to_name_map_.empty()) {
+      event_handler_.Run(content::BluetoothChooserEvent::CANCELLED, "");
+    } else {
+      auto it = device_id_to_name_map_.begin();
+      auto device_id = it->first;
+      event_handler_.Run(content::BluetoothChooserEvent::SELECTED, device_id);
+    }
   }
 }
 
 void BluetoothChooser::AddOrUpdateDevice(const std::string& device_id,
                                          bool should_update_name,
-                                         const base::string16& device_name,
+                                         const std::u16string& device_name,
                                          bool is_gatt_connected,
                                          bool is_paired,
                                          int signal_strength_level) {
-  bool changed = false;
-  auto entry = device_map_.find(device_id);
-  if (entry == device_map_.end()) {
-    device_map_[device_id] = device_name;
-    changed = true;
-  } else if (should_update_name) {
-    entry->second = device_name;
+  // Don't fire an event during refresh.
+  if (refreshing_)
+    return;
+
+  // Emit a select-bluetooth-device handler to allow for user to listen for
+  // bluetooth device found. If there's no listener in place, then select the
+  // first device that matches the filters provided.
+  auto [iter, changed] =
+      device_id_to_name_map_.try_emplace(device_id, device_name);
+  if (!changed && should_update_name) {
+    iter->second = device_name;
     changed = true;
   }
 
   if (changed) {
-    // Emit a select-bluetooth-device handler to allow for user to listen for
-    // bluetooth device found.
     bool prevent_default = api_web_contents_->Emit(
         "select-bluetooth-device", GetDeviceList(),
-        base::BindOnce(&OnDeviceChosen, event_handler_));
+        base::BindOnce(&BluetoothChooser::OnDeviceChosen,
+                       weak_ptr_factory_.GetWeakPtr()));
 
-    // If emit not implimented select first device that matches the filters
-    //  provided.
-    if (!prevent_default) {
-      event_handler_.Run(Event::SELECTED, device_id);
-    }
+    if (!prevent_default)
+      event_handler_.Run(content::BluetoothChooserEvent::SELECTED, device_id);
+  }
+}
+
+void BluetoothChooser::OnDeviceChosen(const std::string& device_id) {
+  if (event_handler_.is_null())
+    return;
+
+  if (device_id.empty()) {
+    event_handler_.Run(content::BluetoothChooserEvent::CANCELLED, device_id);
+  } else {
+    event_handler_.Run(content::BluetoothChooserEvent::SELECTED, device_id);
   }
 }
 
 std::vector<electron::BluetoothChooser::DeviceInfo>
 BluetoothChooser::GetDeviceList() {
   std::vector<electron::BluetoothChooser::DeviceInfo> vec;
-  vec.reserve(device_map_.size());
-  for (const auto& it : device_map_) {
-    DeviceInfo info = {it.first, it.second};
-    vec.push_back(info);
-  }
-
+  vec.reserve(device_id_to_name_map_.size());
+  for (const auto& [device_id, device_name] : device_id_to_name_map_)
+    vec.emplace_back(device_id, device_name);
   return vec;
 }
 

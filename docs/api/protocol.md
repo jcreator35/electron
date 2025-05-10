@@ -7,51 +7,50 @@ Process: [Main](../glossary.md#main-process)
 An example of implementing a protocol that has the same effect as the
 `file://` protocol:
 
-```javascript
-const { app, protocol } = require('electron')
-const path = require('path')
+```js
+const { app, protocol, net } = require('electron')
+const path = require('node:path')
+const url = require('node:url')
 
-app.on('ready', () => {
-  protocol.registerFileProtocol('atom', (request, callback) => {
-    const url = request.url.substr(7)
-    callback({ path: path.normalize(`${__dirname}/${url}`) })
-  }, (error) => {
-    if (error) console.error('Failed to register protocol')
+app.whenReady().then(() => {
+  protocol.handle('atom', (request) => {
+    const filePath = request.url.slice('atom://'.length)
+    return net.fetch(url.pathToFileURL(path.join(__dirname, filePath)).toString())
   })
 })
 ```
 
-**Note:** All methods unless specified can only be used after the `ready` event
-of the `app` module gets emitted.
+> [!NOTE]
+> All methods unless specified can only be used after the `ready` event
+> of the `app` module gets emitted.
 
 ## Using `protocol` with a custom `partition` or `session`
 
-A protocol is registered to a specific Electron [`session`](./session.md) object. If you don't specify a session, then your `protocol` will be applied to the default session that Electron uses. However, if you define a `partition` or `session` on your `browserWindow`'s `webPreferences`, then that window will use a different session and your custom protocol will not work if you just use `electron.protocol.XXX`.
+A protocol is registered to a specific Electron [`session`](./session.md)
+object. If you don't specify a session, then your `protocol` will be applied to
+the default session that Electron uses. However, if you define a `partition` or
+`session` on your `browserWindow`'s `webPreferences`, then that window will use
+a different session and your custom protocol will not work if you just use
+`electron.protocol.XXX`.
 
-To have your custom protocol work in combination with a custom session, you need to register it to that session explicitly.
+To have your custom protocol work in combination with a custom session, you need
+to register it to that session explicitly.
 
-```javascript
-const { session, app, protocol } = require('electron')
-const path = require('path')
+```js
+const { app, BrowserWindow, net, protocol, session } = require('electron')
+const path = require('node:path')
+const url = require('url')
 
-app.on('ready', () => {
+app.whenReady().then(() => {
   const partition = 'persist:example'
   const ses = session.fromPartition(partition)
 
-  ses.protocol.registerFileProtocol('atom', (request, callback) => {
-    const url = request.url.substr(7)
-    callback({ path: path.normalize(`${__dirname}/${url}`) })
-  }, (error) => {
-    if (error) console.error('Failed to register protocol')
+  ses.protocol.handle('atom', (request) => {
+    const filePath = request.url.slice('atom://'.length)
+    return net.fetch(url.pathToFileURL(path.resolve(__dirname, filePath)).toString())
   })
 
-  mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
-    webPreferences: {
-      partition: partition
-    }
-  })
+  const mainWindow = new BrowserWindow({ webPreferences: { partition } })
 })
 ```
 
@@ -63,28 +62,29 @@ The `protocol` module has the following methods:
 
 * `customSchemes` [CustomScheme[]](structures/custom-scheme.md)
 
+> [!NOTE]
+> This method can only be used before the `ready` event of the `app`
+> module gets emitted and can be called only once.
 
-**Note:** This method can only be used before the `ready` event of the `app`
-module gets emitted and can be called only once.
+Registers the `scheme` as standard, secure, bypasses content security policy for
+resources, allows registering ServiceWorker, supports fetch API, streaming
+video/audio, and V8 code cache. Specify a privilege with the value of `true` to
+enable the capability.
 
-Registers the `scheme` as standard, secure, bypasses content security policy for resources,
-allows registering ServiceWorker and supports fetch API.
+An example of registering a privileged scheme, that bypasses Content Security
+Policy:
 
-Specify a privilege with the value of `true` to enable the capability.
-An example of registering a privileged scheme, with bypassing Content Security Policy:
-
-```javascript
+```js
 const { protocol } = require('electron')
 protocol.registerSchemesAsPrivileged([
   { scheme: 'foo', privileges: { bypassCSP: true } }
 ])
 ```
 
-A standard scheme adheres to what RFC 3986 calls [generic URI
-syntax](https://tools.ietf.org/html/rfc3986#section-3). For example `http` and
-`https` are standard schemes, while `file` is not.
+A standard scheme adheres to what RFC 3986 calls [generic URI syntax](https://tools.ietf.org/html/rfc3986#section-3).
+For example `http` and `https` are standard schemes, while `file` is not.
 
-Registering a scheme as standard, will allow relative and absolute resources to
+Registering a scheme as standard allows relative and absolute resources to
 be resolved correctly when served. Otherwise the scheme will behave like the
 `file` protocol, but without the ability to resolve relative URLs.
 
@@ -102,172 +102,233 @@ Registering a scheme as standard will allow access to files through the
 [FileSystem API][file-system-api]. Otherwise the renderer will throw a security
 error for the scheme.
 
-By default web storage apis (localStorage, sessionStorage, webSQL, indexedDB, cookies)
-are disabled for non standard schemes. So in general if you want to register a
-custom protocol to replace the `http` protocol, you have to register it as a standard scheme.
+By default web storage apis (localStorage, sessionStorage, webSQL, indexedDB,
+cookies) are disabled for non standard schemes. So in general if you want to
+register a custom protocol to replace the `http` protocol, you have to register
+it as a standard scheme.
 
-`protocol.registerSchemesAsPrivileged` can be used to replicate the functionality of the previous `protocol.registerStandardSchemes`, `webFrame.registerURLSchemeAs*` and `protocol.registerServiceWorkerSchemes` functions that existed prior to Electron 5.0.0, for example:
+Protocols that use streams (http and stream protocols) should set `stream: true`.
+The `<video>` and `<audio>` HTML elements expect protocols to buffer their
+responses by default. The `stream` flag configures those elements to correctly
+expect streaming responses.
 
-**before (<= v4.x)**
-```javascript
-// Main
-protocol.registerStandardSchemes(['scheme1', 'scheme2'], { secure: true })
-// Renderer
-webFrame.registerURLSchemeAsPrivileged('scheme1', { secure: true })
-webFrame.registerURLSchemeAsPrivileged('scheme2', { secure: true })
-```
+### `protocol.handle(scheme, handler)`
 
-**after (>= v5.x)**
-```javascript
+* `scheme` string - scheme to handle, for example `https` or `my-app`. This is
+  the bit before the `:` in a URL.
+* `handler` Function\<[GlobalResponse](https://nodejs.org/api/globals.html#response) | Promise\<GlobalResponse\>\>
+  * `request` [GlobalRequest](https://nodejs.org/api/globals.html#request)
+
+Register a protocol handler for `scheme`. Requests made to URLs with this
+scheme will delegate to this handler to determine what response should be sent.
+
+Either a `Response` or a `Promise<Response>` can be returned.
+
+Example:
+
+```js
+const { app, net, protocol } = require('electron')
+const path = require('node:path')
+const { pathToFileURL } = require('url')
+
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'scheme1', privileges: { standard: true, secure: true } },
-  { scheme: 'scheme2', privileges: { standard: true, secure: true } }
+  {
+    scheme: 'app',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true
+    }
+  }
 ])
+
+app.whenReady().then(() => {
+  protocol.handle('app', (req) => {
+    const { host, pathname } = new URL(req.url)
+    if (host === 'bundle') {
+      if (pathname === '/') {
+        return new Response('<h1>hello, world</h1>', {
+          headers: { 'content-type': 'text/html' }
+        })
+      }
+      // NB, this checks for paths that escape the bundle, e.g.
+      // app://bundle/../../secret_file.txt
+      const pathToServe = path.resolve(__dirname, pathname)
+      const relativePath = path.relative(__dirname, pathToServe)
+      const isSafe = relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+      if (!isSafe) {
+        return new Response('bad', {
+          status: 400,
+          headers: { 'content-type': 'text/html' }
+        })
+      }
+
+      return net.fetch(pathToFileURL(pathToServe).toString())
+    } else if (host === 'api') {
+      return net.fetch('https://api.my-server.com/' + pathname, {
+        method: req.method,
+        headers: req.headers,
+        body: req.body
+      })
+    }
+  })
+})
 ```
 
-### `protocol.registerFileProtocol(scheme, handler[, completion])`
+See the MDN docs for [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) and [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) for more details.
 
-* `scheme` String
+### `protocol.unhandle(scheme)`
+
+* `scheme` string - scheme for which to remove the handler.
+
+Removes a protocol handler registered with `protocol.handle`.
+
+### `protocol.isProtocolHandled(scheme)`
+
+* `scheme` string
+
+Returns `boolean` - Whether `scheme` is already handled.
+
+### `protocol.registerFileProtocol(scheme, handler)` _Deprecated_
+
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `filePath` String | [FilePathWithHeaders](structures/file-path-with-headers.md) (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` (string | [ProtocolResponse](structures/protocol-response.md))
 
-Registers a protocol of `scheme` that will send the file as a response. The
-`handler` will be called with `handler(request, callback)` when a `request` is
-going to be created with `scheme`. `completion` will be called with
-`completion(null)` when `scheme` is successfully registered or
-`completion(error)` when failed.
+Returns `boolean` - Whether the protocol was successfully registered
+
+Registers a protocol of `scheme` that will send a file as the response. The
+`handler` will be called with `request` and `callback` where `request` is
+an incoming request for the `scheme`.
 
 To handle the `request`, the `callback` should be called with either the file's
 path or an object that has a `path` property, e.g. `callback(filePath)` or
-`callback({ path: filePath })`. The object may also have a `headers` property
-which gives a map of headers to values for the response headers, e.g.
-`callback({ path: filePath, headers: {"Content-Security-Policy": "default-src 'none'"]})`.
-
-When `callback` is called with nothing, a number, or an object that has an
-`error` property, the `request` will fail with the `error` number you
-specified. For the available error numbers you can use, please see the
-[net error list][net-error].
+`callback({ path: filePath })`. The `filePath` must be an absolute path.
 
 By default the `scheme` is treated like `http:`, which is parsed differently
-than protocols that follow the "generic URI syntax" like `file:`.
+from protocols that follow the "generic URI syntax" like `file:`.
 
-### `protocol.registerBufferProtocol(scheme, handler[, completion])`
+### `protocol.registerBufferProtocol(scheme, handler)` _Deprecated_
 
-* `scheme` String
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `buffer` (Buffer | [MimeTypedBuffer](structures/mime-typed-buffer.md)) (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` (Buffer | [ProtocolResponse](structures/protocol-response.md))
+
+Returns `boolean` - Whether the protocol was successfully registered
 
 Registers a protocol of `scheme` that will send a `Buffer` as a response.
 
 The usage is the same with `registerFileProtocol`, except that the `callback`
-should be called with either a `Buffer` object or an object that has the `data`,
-`mimeType`, and `charset` properties.
+should be called with either a `Buffer` object or an object that has the `data`
+property.
 
 Example:
 
-```javascript
-const { protocol } = require('electron')
-
+```js
 protocol.registerBufferProtocol('atom', (request, callback) => {
   callback({ mimeType: 'text/html', data: Buffer.from('<h5>Response</h5>') })
-}, (error) => {
-  if (error) console.error('Failed to register protocol')
 })
 ```
 
-### `protocol.registerStringProtocol(scheme, handler[, completion])`
+### `protocol.registerStringProtocol(scheme, handler)` _Deprecated_
 
-* `scheme` String
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `data` (String | [StringProtocolResponse](structures/string-protocol-response.md)) (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` (string | [ProtocolResponse](structures/protocol-response.md))
 
-Registers a protocol of `scheme` that will send a `String` as a response.
+Returns `boolean` - Whether the protocol was successfully registered
+
+Registers a protocol of `scheme` that will send a `string` as a response.
 
 The usage is the same with `registerFileProtocol`, except that the `callback`
-should be called with either a `String` or an object that has the `data`,
-`mimeType`, and `charset` properties.
+should be called with either a `string` or an object that has the `data`
+property.
 
-### `protocol.registerHttpProtocol(scheme, handler[, completion])`
+### `protocol.registerHttpProtocol(scheme, handler)` _Deprecated_
 
-* `scheme` String
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `redirectRequest` Object
-      * `url` String
-      * `method` String (optional)
-      * `session` Session | null (optional)
-      * `uploadData` [ProtocolResponseUploadData](structures/protocol-response-upload-data.md) (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` [ProtocolResponse](structures/protocol-response.md)
+
+Returns `boolean` - Whether the protocol was successfully registered
 
 Registers a protocol of `scheme` that will send an HTTP request as a response.
 
 The usage is the same with `registerFileProtocol`, except that the `callback`
-should be called with a `redirectRequest` object that has the `url`, `method`,
-`referrer`, `uploadData` and `session` properties.
+should be called with an object that has the `url` property.
 
-By default the HTTP request will reuse the current session. If you want the
-request to have a different session you should set `session` to `null`.
+### `protocol.registerStreamProtocol(scheme, handler)` _Deprecated_
 
-For POST requests the `uploadData` object must be provided.
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
 
-### `protocol.registerStreamProtocol(scheme, handler[, completion])`
-
-* `scheme` String
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `stream` (ReadableStream | [StreamProtocolResponse](structures/stream-protocol-response.md)) (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` (ReadableStream | [ProtocolResponse](structures/protocol-response.md))
 
-Registers a protocol of `scheme` that will send a `Readable` as a response.
+Returns `boolean` - Whether the protocol was successfully registered
 
-The usage is similar to the other `register{Any}Protocol`, except that the
-`callback` should be called with either a `Readable` object or an object that
-has the `data`, `statusCode`, and `headers` properties.
+Registers a protocol of `scheme` that will send a stream as a response.
+
+The usage is the same with `registerFileProtocol`, except that the
+`callback` should be called with either a [`ReadableStream`](https://nodejs.org/api/stream.html#stream_class_stream_readable) object or an object that
+has the `data` property.
 
 Example:
 
-```javascript
+```js
 const { protocol } = require('electron')
 const { PassThrough } = require('stream')
 
@@ -286,141 +347,190 @@ protocol.registerStreamProtocol('atom', (request, callback) => {
     },
     data: createStream('<h5>Response</h5>')
   })
-}, (error) => {
-  if (error) console.error('Failed to register protocol')
 })
 ```
 
 It is possible to pass any object that implements the readable stream API (emits
 `data`/`end`/`error` events). For example, here's how a file could be returned:
 
-```javascript
-const { protocol } = require('electron')
-const fs = require('fs')
-
+```js
 protocol.registerStreamProtocol('atom', (request, callback) => {
   callback(fs.createReadStream('index.html'))
-}, (error) => {
-  if (error) console.error('Failed to register protocol')
 })
 ```
 
-### `protocol.unregisterProtocol(scheme[, completion])`
+### `protocol.unregisterProtocol(scheme)` _Deprecated_
 
-* `scheme` String
-* `completion` Function (optional)
-  * `error` Error
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
+
+Returns `boolean` - Whether the protocol was successfully unregistered
 
 Unregisters the custom protocol of `scheme`.
 
-### `protocol.isProtocolHandled(scheme)`
+### `protocol.isProtocolRegistered(scheme)` _Deprecated_
 
-* `scheme` String
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
 
-Returns `Promise<Boolean>` - fulfilled with a boolean that indicates whether there is
-already a handler for `scheme`.
+* `scheme` string
 
-### `protocol.interceptFileProtocol(scheme, handler[, completion])`
+Returns `boolean` - Whether `scheme` is already registered.
 
-* `scheme` String
+### `protocol.interceptFileProtocol(scheme, handler)` _Deprecated_
+
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `filePath` String
-* `completion` Function (optional)
-  * `error` Error
+    * `response` (string | [ProtocolResponse](structures/protocol-response.md))
+
+Returns `boolean` - Whether the protocol was successfully intercepted
 
 Intercepts `scheme` protocol and uses `handler` as the protocol's new handler
 which sends a file as a response.
 
-### `protocol.interceptStringProtocol(scheme, handler[, completion])`
+### `protocol.interceptStringProtocol(scheme, handler)` _Deprecated_
 
-* `scheme` String
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `data` (String | [StringProtocolResponse](structures/string-protocol-response.md)) (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` (string | [ProtocolResponse](structures/protocol-response.md))
+
+Returns `boolean` - Whether the protocol was successfully intercepted
 
 Intercepts `scheme` protocol and uses `handler` as the protocol's new handler
-which sends a `String` as a response.
+which sends a `string` as a response.
 
-### `protocol.interceptBufferProtocol(scheme, handler[, completion])`
+### `protocol.interceptBufferProtocol(scheme, handler)` _Deprecated_
 
-* `scheme` String
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `buffer` Buffer (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` (Buffer | [ProtocolResponse](structures/protocol-response.md))
+
+Returns `boolean` - Whether the protocol was successfully intercepted
 
 Intercepts `scheme` protocol and uses `handler` as the protocol's new handler
 which sends a `Buffer` as a response.
 
-### `protocol.interceptHttpProtocol(scheme, handler[, completion])`
+### `protocol.interceptHttpProtocol(scheme, handler)` _Deprecated_
 
-* `scheme` String
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `redirectRequest` Object
-      * `url` String
-      * `method` String (optional)
-      * `session` Session | null (optional)
-      * `uploadData` [ProtocolResponseUploadData](structures/protocol-response-upload-data.md) (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` [ProtocolResponse](structures/protocol-response.md)
+
+Returns `boolean` - Whether the protocol was successfully intercepted
 
 Intercepts `scheme` protocol and uses `handler` as the protocol's new handler
 which sends a new HTTP request as a response.
 
-### `protocol.interceptStreamProtocol(scheme, handler[, completion])`
+### `protocol.interceptStreamProtocol(scheme, handler)` _Deprecated_
 
-* `scheme` String
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
 * `handler` Function
-  * `request` Object
-    * `url` String
-    * `headers` Record<String, String>
-    * `referrer` String
-    * `method` String
-    * `uploadData` [UploadData[]](structures/upload-data.md)
+  * `request` [ProtocolRequest](structures/protocol-request.md)
   * `callback` Function
-    * `stream` (ReadableStream | [StreamProtocolResponse](structures/stream-protocol-response.md)) (optional)
-* `completion` Function (optional)
-  * `error` Error
+    * `response` (ReadableStream | [ProtocolResponse](structures/protocol-response.md))
+
+Returns `boolean` - Whether the protocol was successfully intercepted
 
 Same as `protocol.registerStreamProtocol`, except that it replaces an existing
 protocol handler.
 
-### `protocol.uninterceptProtocol(scheme[, completion])`
+### `protocol.uninterceptProtocol(scheme)` _Deprecated_
 
-* `scheme` String
-* `completion` Function (optional)
-  * `error` Error
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
+
+Returns `boolean` - Whether the protocol was successfully unintercepted
 
 Remove the interceptor installed for `scheme` and restore its original handler.
 
-[net-error]: https://code.google.com/p/chromium/codesearch#chromium/src/net/base/net_error_list.h
+### `protocol.isProtocolIntercepted(scheme)` _Deprecated_
+
+<!--
+```YAML history
+deprecated:
+  - pr-url: https://github.com/electron/electron/pull/36674
+    description: "`protocol.register*Protocol` and `protocol.intercept*Protocol` methods have been replaced with `protocol.handle`"
+    breaking-changes-header: deprecated-protocolunregisterinterceptbufferstringstreamfilehttpprotocol-and-protocolisprotocolregisteredintercepted
+```
+-->
+
+* `scheme` string
+
+Returns `boolean` - Whether `scheme` is already intercepted.
+
 [file-system-api]: https://developer.mozilla.org/en-US/docs/Web/API/LocalFileSystem

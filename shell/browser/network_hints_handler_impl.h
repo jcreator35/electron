@@ -2,14 +2,16 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_NETWORK_HINTS_HANDLER_IMPL_H_
-#define SHELL_BROWSER_NETWORK_HINTS_HANDLER_IMPL_H_
+#ifndef ELECTRON_SHELL_BROWSER_NETWORK_HINTS_HANDLER_IMPL_H_
+#define ELECTRON_SHELL_BROWSER_NETWORK_HINTS_HANDLER_IMPL_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/network_hints/browser/simple_network_hints_handler_impl.h"
 
 namespace content {
 class RenderFrameHost;
-}
+class BrowserContext;
+}  // namespace content
 
 class NetworkHintsHandlerImpl
     : public network_hints::SimpleNetworkHintsHandlerImpl {
@@ -22,12 +24,13 @@ class NetworkHintsHandlerImpl
           receiver);
 
   // network_hints::mojom::NetworkHintsHandler:
-  void Preconnect(const GURL& url, bool allow_credentials) override;
+  void Preconnect(const url::SchemeHostPort& url,
+                  bool allow_credentials) override;
 
  private:
   explicit NetworkHintsHandlerImpl(content::RenderFrameHost*);
 
-  content::RenderFrameHost* render_frame_host_ = nullptr;
+  raw_ptr<content::BrowserContext> browser_context_ = nullptr;
 };
 
-#endif  // SHELL_BROWSER_NETWORK_HINTS_HANDLER_IMPL_H_
+#endif  // ELECTRON_SHELL_BROWSER_NETWORK_HINTS_HANDLER_IMPL_H_

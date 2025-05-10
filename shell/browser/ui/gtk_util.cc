@@ -8,75 +8,85 @@
 #include <gtk/gtk.h>
 #include <stdint.h>
 
+#include "base/macros/remove_parens.h"
+#include "base/strings/stringize_macros.h"
+#include "electron/electron_gtk_stubs.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkUnPreMultiply.h"
 
+// The following utilities are pulled from
+// https://source.chromium.org/chromium/chromium/src/+/main:ui/gtk/select_file_dialog_linux_gtk.cc;l=44-75;drc=a03ba4ca94f75531207c3ea832d6a605cde77394
 namespace gtk_util {
 
-// Copied from L40-L55 in
-// https://cs.chromium.org/chromium/src/chrome/browser/ui/libgtkui/select_file_dialog_impl_gtk.cc
-#if GTK_CHECK_VERSION(3, 90, 0)
-// GTK stock items have been deprecated.  The docs say to switch to using the
-// strings "_Open", etc.  However this breaks i18n.  We could supply our own
-// internationalized strings, but the "_" in these strings is significant: it's
-// the keyboard shortcut to select these actions.  TODO: Provide
-// internationalized strings when GTK provides support for it.
-const char* const kCancelLabel = "_Cancel";
-const char* const kNoLabel = "_No";
-const char* const kOkLabel = "_OK";
-const char* const kOpenLabel = "_Open";
-const char* const kSaveLabel = "_Save";
-const char* const kYesLabel = "_Yes";
-#else
-G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-const char* const kCancelLabel = GTK_STOCK_CANCEL;
-const char* const kNoLabel = GTK_STOCK_NO;
-const char* const kOkLabel = GTK_STOCK_OK;
-const char* const kOpenLabel = GTK_STOCK_OPEN;
-const char* const kSaveLabel = GTK_STOCK_SAVE;
-const char* const kYesLabel = GTK_STOCK_YES;
-G_GNUC_END_IGNORE_DEPRECATIONS
-#endif
+namespace {
+
+const char* GtkGettext(const char* str) {
+  // ex: "gtk30". GTK_MAJOR_VERSION is #defined as an int in parenthesis,
+  // like (3), so use base macros to remove parenthesis and stringize it
+  static const char kGettextDomain[] =
+      "gtk" STRINGIZE(BASE_REMOVE_PARENS(GTK_MAJOR_VERSION)) "0";
+  return g_dgettext(kGettextDomain, str);
+}
+
+}  // namespace
+
+const char* GetCancelLabel() {
+  static const char* cancel = GtkGettext("_Cancel");
+  return cancel;
+}
+
+const char* GetOpenLabel() {
+  static const char* open = GtkGettext("_Open");
+  return open;
+}
+
+const char* GetSaveLabel() {
+  static const char* save = GtkGettext("_Save");
+  return save;
+}
+
+const char* GetOkLabel() {
+  static const char* ok = GtkGettext("_Ok");
+  return ok;
+}
+
+const char* GetNoLabel() {
+  static const char* no = GtkGettext("_No");
+  return no;
+}
+
+const char* GetYesLabel() {
+  static const char* yes = GtkGettext("_Yes");
+  return yes;
+}
 
 GdkPixbuf* GdkPixbufFromSkBitmap(const SkBitmap& bitmap) {
   if (bitmap.isNull())
-    return nullptr;
+    return {};
 
-  int width = bitmap.width();
-  int height = bitmap.height();
-
-  GdkPixbuf* pixbuf =
-      gdk_pixbuf_new(GDK_COLORSPACE_RGB,  // The only colorspace gtk supports.
-                     TRUE,                // There is an alpha channel.
-                     8, width, height);
-
-  // SkBitmaps are premultiplied, we need to unpremultiply them.
-  const int kBytesPerPixel = 4;
-  uint8_t* divided = gdk_pixbuf_get_pixels(pixbuf);
-
-  for (int y = 0, i = 0; y < height; y++) {
-    for (int x = 0; x < width; x++) {
-      uint32_t pixel = bitmap.getAddr32(0, y)[x];
-
-      int alpha = SkColorGetA(pixel);
-      if (alpha != 0 && alpha != 255) {
-        SkColor unmultiplied = SkUnPreMultiply::PMColorToColor(pixel);
-        divided[i + 0] = SkColorGetR(unmultiplied);
-        divided[i + 1] = SkColorGetG(unmultiplied);
-        divided[i + 2] = SkColorGetB(unmultiplied);
-        divided[i + 3] = alpha;
-      } else {
-        divided[i + 0] = SkColorGetR(pixel);
-        divided[i + 1] = SkColorGetG(pixel);
-        divided[i + 2] = SkColorGetB(pixel);
-        divided[i + 3] = alpha;
-      }
-      i += kBytesPerPixel;
+  constexpr int kBytesPerPixel = 4;
+  const auto [width, height] = bitmap.dimensions();
+  std::vector<uint8_t> bytes;
+  bytes.reserve(width * height * kBytesPerPixel);
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      const SkColor pixel = bitmap.getColor(x, y);
+      bytes.emplace_back(SkColorGetR(pixel));
+      bytes.emplace_back(SkColorGetG(pixel));
+      bytes.emplace_back(SkColorGetB(pixel));
+      bytes.emplace_back(SkColorGetA(pixel));
     }
   }
 
-  return pixbuf;
+  constexpr GdkColorspace kColorspace = GDK_COLORSPACE_RGB;
+  constexpr gboolean kHasAlpha = true;
+  constexpr int kBitsPerSample = 8;
+  return gdk_pixbuf_new_from_bytes(
+      g_bytes_new(std::data(bytes), std::size(bytes)), kColorspace, kHasAlpha,
+      kBitsPerSample, width, height,
+      gdk_pixbuf_calculate_rowstride(kColorspace, kHasAlpha, kBitsPerSample,
+                                     width, height));
 }
 
 }  // namespace gtk_util

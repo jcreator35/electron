@@ -1,42 +1,23 @@
-import { EventEmitter } from 'events'
-import { deprecate } from 'electron'
-const { systemPreferences, SystemPreferences } = process.electronBinding('system_preferences')
+import * as deprecate from '@electron/internal/common/deprecate';
 
-// SystemPreferences is an EventEmitter.
-Object.setPrototypeOf(SystemPreferences.prototype, EventEmitter.prototype)
-EventEmitter.call(systemPreferences)
+const { systemPreferences } = process._linkedBinding('electron_browser_system_preferences');
 
-if ('appLevelAppearance' in systemPreferences) {
-  deprecate.fnToProperty(
-    SystemPreferences.prototype,
-    'appLevelAppearance',
-    '_getAppLevelAppearance',
-    '_setAppLevelAppearance'
-  )
+if ('getEffectiveAppearance' in systemPreferences) {
+  const nativeEAGetter = systemPreferences.getEffectiveAppearance;
+  Object.defineProperty(systemPreferences, 'effectiveAppearance', {
+    get: () => nativeEAGetter.call(systemPreferences)
+  });
 }
 
-if ('effectiveAppearance' in systemPreferences) {
-  deprecate.fnToProperty(
-    SystemPreferences.prototype,
-    'effectiveAppearance',
-    '_getEffectiveAppearance'
-  )
+if ('accessibilityDisplayShouldReduceTransparency' in systemPreferences) {
+  const reduceTransparencyDeprecated = deprecate.warnOnce('systemPreferences.accessibilityDisplayShouldReduceTransparency', 'nativeTheme.prefersReducedTransparency');
+  const nativeReduceTransparency = systemPreferences.accessibilityDisplayShouldReduceTransparency;
+  Object.defineProperty(systemPreferences, 'accessibilityDisplayShouldReduceTransparency', {
+    get: () => {
+      reduceTransparencyDeprecated();
+      return nativeReduceTransparency;
+    }
+  });
 }
 
-SystemPreferences.prototype.isDarkMode = deprecate.moveAPI(
-  SystemPreferences.prototype.isDarkMode,
-  'systemPreferences.isDarkMode()',
-  'nativeTheme.shouldUseDarkColors'
-)
-SystemPreferences.prototype.isInvertedColorScheme = deprecate.moveAPI(
-  SystemPreferences.prototype.isInvertedColorScheme,
-  'systemPreferences.isInvertedColorScheme()',
-  'nativeTheme.shouldUseInvertedColorScheme'
-)
-SystemPreferences.prototype.isHighContrastColorScheme = deprecate.moveAPI(
-  SystemPreferences.prototype.isHighContrastColorScheme,
-  'systemPreferences.isHighContrastColorScheme()',
-  'nativeTheme.shouldUseHighContrastColors'
-)
-
-module.exports = systemPreferences
+export default systemPreferences;

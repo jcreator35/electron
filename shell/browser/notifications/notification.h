@@ -2,42 +2,45 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_NOTIFICATIONS_NOTIFICATION_H_
-#define SHELL_BROWSER_NOTIFICATIONS_NOTIFICATION_H_
+#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_NOTIFICATION_H_
+#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_NOTIFICATION_H_
 
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string16.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "url/gurl.h"
 
 namespace electron {
 
+extern const bool debug_notifications;
+
 class NotificationDelegate;
 class NotificationPresenter;
 
 struct NotificationAction {
-  base::string16 type;
-  base::string16 text;
+  std::u16string type;
+  std::u16string text;
 };
 
 struct NotificationOptions {
-  base::string16 title;
-  base::string16 subtitle;
-  base::string16 msg;
+  std::u16string title;
+  std::u16string subtitle;
+  std::u16string msg;
   std::string tag;
   bool silent;
   GURL icon_url;
   SkBitmap icon;
   bool has_reply;
-  base::string16 timeout_type;
-  base::string16 reply_placeholder;
-  base::string16 sound;
-  base::string16 urgency;  // Linux
+  std::u16string timeout_type;
+  std::u16string reply_placeholder;
+  std::u16string sound;
+  std::u16string urgency;  // Linux
   std::vector<NotificationAction> actions;
-  base::string16 close_button_text;
+  std::u16string close_button_text;
+  std::u16string toast_xml;
 
   NotificationOptions();
   ~NotificationOptions();
@@ -49,14 +52,20 @@ class Notification {
 
   // Shows the notification.
   virtual void Show(const NotificationOptions& options) = 0;
-  // Closes the notification, this instance will be destroyed after the
-  // notification gets closed.
+
+  // Dismisses the notification. On some platforms this will result in full
+  // removal and destruction of the notification, but if the initial dismissal
+  // does not fully get rid of the notification it will be destroyed in Remove.
   virtual void Dismiss() = 0;
+
+  // Removes the notification if it was not fully removed during dismissal,
+  // as can happen on some platforms including Windows.
+  virtual void Remove() {}
 
   // Should be called by derived classes.
   void NotificationClicked();
-  void NotificationDismissed();
-  void NotificationFailed();
+  void NotificationDismissed(bool should_destroy = true);
+  void NotificationFailed(const std::string& error = "");
 
   // delete this.
   void Destroy();
@@ -67,25 +76,30 @@ class Notification {
 
   void set_delegate(NotificationDelegate* delegate) { delegate_ = delegate; }
   void set_notification_id(const std::string& id) { notification_id_ = id; }
+  void set_is_dismissed(bool dismissed) { is_dismissed_ = dismissed; }
 
   NotificationDelegate* delegate() const { return delegate_; }
   NotificationPresenter* presenter() const { return presenter_; }
   const std::string& notification_id() const { return notification_id_; }
+  bool is_dismissed() const { return is_dismissed_; }
+
+  // disable copy
+  Notification(const Notification&) = delete;
+  Notification& operator=(const Notification&) = delete;
 
  protected:
   Notification(NotificationDelegate* delegate,
                NotificationPresenter* presenter);
 
  private:
-  NotificationDelegate* delegate_;
-  NotificationPresenter* presenter_;
+  raw_ptr<NotificationDelegate> delegate_;
+  raw_ptr<NotificationPresenter> presenter_;
   std::string notification_id_;
+  bool is_dismissed_ = false;
 
-  base::WeakPtrFactory<Notification> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(Notification);
+  base::WeakPtrFactory<Notification> weak_factory_{this};
 };
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_NOTIFICATIONS_NOTIFICATION_H_
+#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_NOTIFICATION_H_

@@ -6,7 +6,7 @@ Process: [Main](../glossary.md#main-process)
 
 For example:
 
-```javascript
+```js
 const { powerSaveBlocker } = require('electron')
 
 const id = powerSaveBlocker.start('prevent-display-sleep')
@@ -21,7 +21,7 @@ The `powerSaveBlocker` module has the following methods:
 
 ### `powerSaveBlocker.start(type)`
 
-* `type` String - Power save blocker type.
+* `type` string - Power save blocker type.
   * `prevent-app-suspension` - Prevent the application from being suspended.
     Keeps system active but allows screen to be turned off. Example use cases:
     downloading a file or playing audio.
@@ -33,10 +33,11 @@ Returns `Integer` - The blocker ID that is assigned to this power blocker.
 Starts preventing the system from entering lower-power mode. Returns an integer
 identifying the power save blocker.
 
-**Note:** `prevent-display-sleep` has higher precedence over
-`prevent-app-suspension`. Only the highest precedence type takes effect. In
-other words, `prevent-display-sleep` always takes precedence over
-`prevent-app-suspension`.
+> [!NOTE]
+> `prevent-display-sleep` has higher precedence over
+> `prevent-app-suspension`. Only the highest precedence type takes effect. In
+> other words, `prevent-display-sleep` always takes precedence over
+> `prevent-app-suspension`.
 
 For example, an API calling A requests for `prevent-app-suspension`, and
 another calling B requests for `prevent-display-sleep`. `prevent-display-sleep`
@@ -49,8 +50,10 @@ is used.
 
 Stops the specified power save blocker.
 
+Returns `boolean` - Whether the specified `powerSaveBlocker` has been stopped.
+
 ### `powerSaveBlocker.isStarted(id)`
 
 * `id` Integer - The power save blocker id returned by `powerSaveBlocker.start`.
 
-Returns `Boolean` - Whether the corresponding `powerSaveBlocker` has started.
+Returns `boolean` - Whether the corresponding `powerSaveBlocker` has started.

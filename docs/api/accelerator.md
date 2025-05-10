@@ -2,9 +2,9 @@
 
 > Define keyboard shortcuts.
 
-Accelerators are Strings that can contain multiple modifiers and a single key code,
+Accelerators are strings that can contain multiple modifiers and a single key code,
 combined by the `+` character, and are used to define keyboard shortcuts
-throughout your application.
+throughout your application. Accelerators are case insensitive.
 
 Examples:
 
@@ -15,10 +15,10 @@ Shortcuts are registered with the [`globalShortcut`](global-shortcut.md) module
 using the [`register`](global-shortcut.md#globalshortcutregisteraccelerator-callback)
 method, i.e.
 
-```javascript
+```js
 const { app, globalShortcut } = require('electron')
 
-app.on('ready', () => {
+app.whenReady().then(() => {
   // Register a 'CommandOrControl+Y' shortcut listener.
   globalShortcut.register('CommandOrControl+Y', () => {
     // Do stuff when Y and either Command/Control is pressed.
@@ -35,7 +35,7 @@ Linux and Windows to define some accelerators.
 Use `Alt` instead of `Option`. The `Option` key only exists on macOS, whereas
 the `Alt` key is available on all platforms.
 
-The `Super` key is mapped to the `Windows` key on Windows and Linux and
+The `Super` (or `Meta`) key is mapped to the `Windows` key on Windows and Linux and
 `Cmd` on macOS.
 
 ## Available modifiers
@@ -48,13 +48,14 @@ The `Super` key is mapped to the `Windows` key on Windows and Linux and
 * `AltGr`
 * `Shift`
 * `Super`
+* `Meta`
 
 ## Available key codes
 
 * `0` to `9`
 * `A` to `Z`
 * `F1` to `F24`
-* Punctuations like `~`, `!`, `@`, `#`, `$`, etc.
+* Various Punctuation: `)`, `!`, `@`, `#`, `$`, `%`, `^`, `&`, `*`, `(`, `:`, `;`, `:`, `+`, `=`, `<`, `,`, `_`, `-`, `>`, `.`, `?`, `/`, `~`, `` ` ``, `{`, `]`, `[`, `|`, `\`, `}`, `"`
 * `Plus`
 * `Space`
 * `Tab`

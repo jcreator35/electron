@@ -5,11 +5,15 @@
 
 #include <unistd.h>
 #include <uv.h>
-#include <iostream>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/command_line.h"
+#include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/logging.h"
+#include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/bluez_dbus_thread_manager.h"
+#include "device/bluetooth/dbus/dbus_bluez_manager_wrapper_linux.h"
 
 namespace {
 
@@ -17,22 +21,24 @@ const char kLogindServiceName[] = "org.freedesktop.login1";
 const char kLogindObjectPath[] = "/org/freedesktop/login1";
 const char kLogindManagerInterface[] = "org.freedesktop.login1.Manager";
 
-std::string get_executable_basename() {
-  char buf[4096];
-  size_t buf_size = sizeof(buf);
-  std::string rv("electron");
-  if (!uv_exepath(buf, &buf_size)) {
-    rv = strrchr(static_cast<const char*>(buf), '/') + 1;
-  }
-  return rv;
+base::FilePath::StringType GetExecutableBaseName() {
+  return base::CommandLine::ForCurrentProcess()
+      ->GetProgram()
+      .BaseName()
+      .value();
 }
 
 }  // namespace
 
 namespace electron {
 
-PowerObserverLinux::PowerObserverLinux()
-    : lock_owner_name_(get_executable_basename()), weak_ptr_factory_(this) {
+PowerObserverLinux::PowerObserverLinux(
+    base::PowerSuspendObserver* suspend_observer)
+    : suspend_observer_(suspend_observer),
+      lock_owner_name_(GetExecutableBaseName()) {
+  if (!bluez::BluezDBusManager::IsInitialized())
+    bluez::DBusBluezManagerWrapperLinux::Initialize();
+
   auto* bus = bluez::BluezDBusThreadManager::Get()->GetSystemBus();
   if (!bus) {
     LOG(WARNING) << "Failed to get system bus connection";
@@ -113,7 +119,17 @@ void PowerObserverLinux::UnblockShutdown() {
   shutdown_lock_.reset();
 }
 
-void PowerObserverLinux::SetShutdownHandler(base::Callback<bool()> handler) {
+void PowerObserverLinux::SetShutdownHandler(
+    base::RepeatingCallback<bool()> handler) {
+  // In order to delay system shutdown when e.preventDefault() is invoked
+  // on a powerMonitor 'shutdown' event, we need an org.freedesktop.login1
+  // shutdown delay lock. For more details see the "Taking Delay Locks"
+  // section of https://www.freedesktop.org/wiki/Software/systemd/inhibit/
+  if (handler && !should_shutdown_) {
+    BlockShutdown();
+  } else if (!handler && should_shutdown_) {
+    UnblockShutdown();
+  }
   should_shutdown_ = std::move(handler);
 }
 
@@ -133,11 +149,13 @@ void PowerObserverLinux::OnPrepareForSleep(dbus::Signal* signal) {
     return;
   }
   if (suspending) {
-    OnSuspend();
+    suspend_observer_->OnSuspend();
+
     UnblockSleep();
   } else {
     BlockSleep();
-    OnResume();
+
+    suspend_observer_->OnResume();
   }
 }
 

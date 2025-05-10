@@ -6,35 +6,35 @@ Subject: Pass all globals through "require"
 (cherry picked from commit 7d015419cb7a0ecfe6728431a4ed2056cd411d62)
 
 diff --git a/lib/internal/modules/cjs/loader.js b/lib/internal/modules/cjs/loader.js
-index a1c6db94e49fb2f13c68dc503481beb3decf5cf4..481d59594dbca27c8529a8b424ab3cb190dd8def 100644
+index 33385fa792b71ea3802904dd3c59ce845342c595..92b368394e17a9257578cd5b7422391689732d6d 100644
 --- a/lib/internal/modules/cjs/loader.js
 +++ b/lib/internal/modules/cjs/loader.js
-@@ -83,6 +83,13 @@ const {
-   CHAR_COLON
+@@ -200,6 +200,13 @@ const {
+   CHAR_FORWARD_SLASH,
  } = require('internal/constants');
  
 +// Store the "global" variable from global scope into a local scope, so we can
 +// still reference it from this file even after we deleted the "global" variable
 +// from the global scope.
-+const localGlobal = global;
++const localGlobal = (typeof global !== 'undefined') ? global : undefined;
 +// Do the same for "Buffer".
-+const localBuffer = Buffer;
++const localBuffer = (typeof Buffer !== 'undefined') ? Buffer : undefined;
 +
- const isWindows = process.platform === 'win32';
- 
- const relativeResolveCache = Object.create(null);
-@@ -951,10 +958,12 @@ Module.prototype._compile = function(content, filename) {
-   if (requireDepth === 0) statCache = new Map();
-   if (inspectorWrapper) {
-     result = inspectorWrapper(compiledWrapper, thisValue, exports,
--                              require, module, filename, dirname);
-+                              require, module, filename, dirname, process,
-+                              localGlobal, localBuffer);
+ const {
+   isProxy,
+ } = require('internal/util/types');
+@@ -1725,10 +1732,12 @@ Module.prototype._compile = function(content, filename, format) {
+   if (this[kIsMainSymbol] && getOptionValue('--inspect-brk')) {
+     const { callAndPauseOnStart } = internalBinding('inspector');
+     result = callAndPauseOnStart(compiledWrapper, thisValue, exports,
+-                                 require, module, filename, dirname);
++                                 require, module, filename, dirname,
++                                 process, localGlobal, localBuffer);
    } else {
-     result = compiledWrapper.call(thisValue, exports, require, module,
--                                  filename, dirname);
-+                                  filename, dirname, process, localGlobal,
-+                                  localBuffer);
+     result = ReflectApply(compiledWrapper, thisValue,
+-                          [exports, require, module, filename, dirname]);
++                          [exports, require, module, filename, dirname,
++                           process, localGlobal, localBuffer]);
    }
-   if (requireDepth === 0) statCache = null;
-   return result;
+   this[kIsExecuting] = false;
+   if (requireDepth === 0) { statCache = null; }

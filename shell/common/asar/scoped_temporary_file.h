@@ -2,10 +2,13 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_COMMON_ASAR_SCOPED_TEMPORARY_FILE_H_
-#define SHELL_COMMON_ASAR_SCOPED_TEMPORARY_FILE_H_
+#ifndef ELECTRON_SHELL_COMMON_ASAR_SCOPED_TEMPORARY_FILE_H_
+#define ELECTRON_SHELL_COMMON_ASAR_SCOPED_TEMPORARY_FILE_H_
+
+#include <optional>
 
 #include "base/files/file_path.h"
+#include "shell/common/asar/archive.h"
 
 namespace base {
 class File;
@@ -20,6 +23,8 @@ namespace asar {
 class ScopedTemporaryFile {
  public:
   ScopedTemporaryFile();
+  ScopedTemporaryFile(const ScopedTemporaryFile&) = delete;
+  ScopedTemporaryFile& operator=(const ScopedTemporaryFile&) = delete;
   virtual ~ScopedTemporaryFile();
 
   // Init an empty temporary file with a certain extension.
@@ -29,16 +34,15 @@ class ScopedTemporaryFile {
   bool InitFromFile(base::File* src,
                     const base::FilePath::StringType& ext,
                     uint64_t offset,
-                    uint64_t size);
+                    uint64_t size,
+                    const std::optional<IntegrityPayload>& integrity);
 
   base::FilePath path() const { return path_; }
 
  private:
   base::FilePath path_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedTemporaryFile);
 };
 
 }  // namespace asar
 
-#endif  // SHELL_COMMON_ASAR_SCOPED_TEMPORARY_FILE_H_
+#endif  // ELECTRON_SHELL_COMMON_ASAR_SCOPED_TEMPORARY_FILE_H_

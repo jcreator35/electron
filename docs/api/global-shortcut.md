@@ -8,14 +8,22 @@ The `globalShortcut` module can register/unregister a global keyboard shortcut
 with the operating system so that you can customize the operations for various
 shortcuts.
 
-**Note:** The shortcut is global; it will work even if the app does
-not have the keyboard focus. You should not use this module until the `ready`
-event of the app module is emitted.
+> [!NOTE]
+> The shortcut is global; it will work even if the app does
+> not have the keyboard focus. This module cannot be used before the `ready`
+> event of the app module is emitted.
+> Please also note that it is also possible to use Chromium's
+> `GlobalShortcutsPortal` implementation, which allows apps to bind global
+> shortcuts when running within a Wayland session.
 
-```javascript
+```js
 const { app, globalShortcut } = require('electron')
 
-app.on('ready', () => {
+// Enable usage of Portal's globalShortcuts. This is essential for cases when
+// the app runs in a Wayland session.
+app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal')
+
+app.whenReady().then(() => {
   // Register a 'CommandOrControl+X' shortcut listener.
   const ret = globalShortcut.register('CommandOrControl+X', () => {
     console.log('CommandOrControl+X is pressed')
@@ -47,7 +55,7 @@ The `globalShortcut` module has the following methods:
 * `accelerator` [Accelerator](accelerator.md)
 * `callback` Function
 
-Returns `Boolean` - Whether or not the shortcut was registered successfully.
+Returns `boolean` - Whether or not the shortcut was registered successfully.
 
 Registers a global shortcut of `accelerator`. The `callback` is called when
 the registered shortcut is pressed by the user.
@@ -66,7 +74,7 @@ the app has been authorized as a [trusted accessibility client](https://develope
 
 ### `globalShortcut.registerAll(accelerators, callback)`
 
-* `accelerators` String[] - an array of [Accelerator](accelerator.md)s.
+* `accelerators` [Accelerator](accelerator.md)[] - an array of [Accelerator](accelerator.md)s.
 * `callback` Function
 
 Registers a global shortcut of all `accelerator` items in `accelerators`. The `callback` is called when any of the registered shortcuts are pressed by the user.
@@ -87,7 +95,7 @@ the app has been authorized as a [trusted accessibility client](https://develope
 
 * `accelerator` [Accelerator](accelerator.md)
 
-Returns `Boolean` - Whether this application has registered `accelerator`.
+Returns `boolean` - Whether this application has registered `accelerator`.
 
 When the accelerator is already taken by other applications, this call will
 still return `false`. This behavior is intended by operating systems, since they

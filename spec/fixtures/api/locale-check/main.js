@@ -1,8 +1,17 @@
-const { app } = require('electron')
+const { app } = require('electron');
 
-app.on('ready', () => {
-  process.stdout.write(app.getLocale())
-  process.stdout.end()
+const locale = process.argv[2].substr(11);
+if (locale.length !== 0) {
+  app.commandLine.appendSwitch('lang', locale);
+}
 
-  app.quit()
-})
+app.whenReady().then(() => {
+  if (process.argv[3] === '--print-env') {
+    process.stdout.write(String(process.env.LC_ALL));
+  } else {
+    process.stdout.write(`${app.getLocale()}|${app.getSystemLocale()}|${JSON.stringify(app.getPreferredSystemLanguages())}`);
+  }
+  process.stdout.end();
+
+  app.quit();
+});

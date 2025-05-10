@@ -1,5 +1,3 @@
-const features = process.electronBinding('features')
-
 export const moduleList: ElectronInternal.ModuleEntry[] = [
   {
     name: 'contextBridge',
@@ -21,24 +19,8 @@ export const moduleList: ElectronInternal.ModuleEntry[] = [
     name: 'webFrame',
     loader: () => require('@electron/internal/renderer/api/web-frame')
   },
-  // The internal modules, invisible unless you know their names.
   {
-    name: 'deprecate',
-    loader: () => require('@electron/internal/common/api/deprecate'),
-    private: true
+    name: 'webUtils',
+    loader: () => require('@electron/internal/renderer/api/web-utils')
   }
-]
-
-if (features.isDesktopCapturerEnabled()) {
-  moduleList.push({
-    name: 'desktopCapturer',
-    loader: () => require('@electron/internal/renderer/api/desktop-capturer')
-  })
-}
-
-if (features.isRemoteModuleEnabled() && process.isRemoteModuleEnabled) {
-  moduleList.push({
-    name: 'remote',
-    loader: () => require('@electron/internal/renderer/api/remote')
-  })
-}
+];

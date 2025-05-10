@@ -6,22 +6,24 @@
 
 #include <windows.h>  // windows.h must be included first
 
-#include <atlbase.h>  // atlbase.h for CComPtr
+#include "base/win/shlwapi.h"  // NOLINT(build/include_order)
 
-#include <shlobj.h>
-#include <shobjidl.h>
+// atlbase.h for CComPtr
+#include <atlbase.h>  // NOLINT(build/include_order)
+
+#include <shlobj.h>    // NOLINT(build/include_order)
+#include <shobjidl.h>  // NOLINT(build/include_order)
 
 #include "base/files/file_util.h"
 #include "base/i18n/case_conversion.h"
-#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/win/registry.h"
 #include "shell/browser/native_window_views.h"
-#include "shell/browser/unresponsive_suppressor.h"
+#include "shell/browser/ui/win/dialog_thread.h"
 #include "shell/common/gin_converters/file_path_converter.h"
+#include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/promise.h"
 
 namespace file_dialog {
 
@@ -63,88 +65,15 @@ void ConvertFilters(const Filters& filters,
   }
 }
 
-struct RunState {
-  base::Thread* dialog_thread;
-  scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner;
-};
+auto GetFileNameFromShellItem(IShellItem* pShellItem, SIGDN type) {
+  std::optional<base::FilePath> path;
 
-bool CreateDialogThread(RunState* run_state) {
-  auto thread =
-      std::make_unique<base::Thread>(ELECTRON_PRODUCT_NAME "FileDialogThread");
-  thread->init_com_with_mta(false);
-  if (!thread->Start())
-    return false;
-
-  run_state->dialog_thread = thread.release();
-  run_state->ui_task_runner = base::ThreadTaskRunnerHandle::Get();
-  return true;
-}
-
-void OnDialogOpened(gin_helper::Promise<gin_helper::Dictionary> promise,
-                    bool canceled,
-                    std::vector<base::FilePath> paths) {
-  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(promise.isolate());
-  dict.Set("canceled", canceled);
-  dict.Set("filePaths", paths);
-  promise.Resolve(dict);
-}
-
-void RunOpenDialogInNewThread(
-    const RunState& run_state,
-    const DialogSettings& settings,
-    gin_helper::Promise<gin_helper::Dictionary> promise) {
-  std::vector<base::FilePath> paths;
-  bool result = ShowOpenDialogSync(settings, &paths);
-  run_state.ui_task_runner->PostTask(
-      FROM_HERE,
-      base::BindOnce(&OnDialogOpened, std::move(promise), !result, paths));
-  run_state.ui_task_runner->DeleteSoon(FROM_HERE, run_state.dialog_thread);
-}
-
-void OnSaveDialogDone(gin_helper::Promise<gin_helper::Dictionary> promise,
-                      bool canceled,
-                      const base::FilePath path) {
-  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(promise.isolate());
-  dict.Set("canceled", canceled);
-  dict.Set("filePath", path);
-  promise.Resolve(dict);
-}
-
-void RunSaveDialogInNewThread(
-    const RunState& run_state,
-    const DialogSettings& settings,
-    gin_helper::Promise<gin_helper::Dictionary> promise) {
-  base::FilePath path;
-  bool result = ShowSaveDialogSync(settings, &path);
-  run_state.ui_task_runner->PostTask(
-      FROM_HERE,
-      base::BindOnce(&OnSaveDialogDone, std::move(promise), !result, path));
-  run_state.ui_task_runner->DeleteSoon(FROM_HERE, run_state.dialog_thread);
-}
-
-}  // namespace
-
-static HRESULT GetFileNameFromShellItem(IShellItem* pShellItem,
-                                        SIGDN type,
-                                        LPWSTR lpstr,
-                                        size_t cchLength) {
-  assert(pShellItem != NULL);
-
-  LPWSTR lpstrName = NULL;
-  HRESULT hRet = pShellItem->GetDisplayName(type, &lpstrName);
-
-  if (SUCCEEDED(hRet)) {
-    if (wcslen(lpstrName) < cchLength) {
-      wcscpy_s(lpstr, cchLength, lpstrName);
-    } else {
-      NOTREACHED();
-      hRet = DISP_E_BUFFERTOOSMALL;
-    }
-
-    ::CoTaskMemFree(lpstrName);
+  if (wchar_t* name = {}; SUCCEEDED(pShellItem->GetDisplayName(type, &name))) {
+    path.emplace(name);
+    ::CoTaskMemFree(name);
   }
 
-  return hRet;
+  return path;
 }
 
 static void SetDefaultFolder(IFileDialog* dialog,
@@ -153,7 +82,7 @@ static void SetDefaultFolder(IFileDialog* dialog,
       IsDirectory(file_path) ? file_path.value() : file_path.DirName().value();
 
   ATL::CComPtr<IShellItem> folder_item;
-  HRESULT hr = SHCreateItemFromParsingName(directory.c_str(), NULL,
+  HRESULT hr = SHCreateItemFromParsingName(directory.c_str(), nullptr,
                                            IID_PPV_ARGS(&folder_item));
   if (SUCCEEDED(hr))
     dialog->SetFolder(folder_item);
@@ -161,12 +90,11 @@ static void SetDefaultFolder(IFileDialog* dialog,
 
 static HRESULT ShowFileDialog(IFileDialog* dialog,
                               const DialogSettings& settings) {
-  electron::UnresponsiveSuppressor suppressor;
   HWND parent_window =
       settings.parent_window
           ? static_cast<electron::NativeWindowViews*>(settings.parent_window)
                 ->GetAcceleratedWidget()
-          : NULL;
+          : nullptr;
 
   return dialog->Show(parent_window);
 }
@@ -180,10 +108,10 @@ static void ApplySettings(IFileDialog* dialog, const DialogSettings& settings) {
   dialog->SetFileName(file_part.c_str());
 
   if (!settings.title.empty())
-    dialog->SetTitle(base::UTF8ToUTF16(settings.title).c_str());
+    dialog->SetTitle(base::UTF8ToWide(settings.title).c_str());
 
   if (!settings.button_label.empty())
-    dialog->SetOkButtonLabel(base::UTF8ToUTF16(settings.button_label).c_str());
+    dialog->SetOkButtonLabel(base::UTF8ToWide(settings.button_label).c_str());
 
   std::vector<std::wstring> buffer;
   std::vector<COMDLG_FILTERSPEC> filterspec;
@@ -205,10 +133,14 @@ static void ApplySettings(IFileDialog* dialog, const DialogSettings& settings) {
   // We set file extension to the first none-wildcard extension to make
   // sure the dialog will update file extension automatically.
   for (size_t i = 0; i < filterspec.size(); ++i) {
-    if (std::wstring(filterspec[i].pszSpec) != L"*.*") {
+    std::wstring spec(filterspec[i].pszSpec);
+    if (spec != L"*.*") {
       // SetFileTypeIndex is regarded as one-based index.
       dialog->SetFileTypeIndex(i + 1);
-      dialog->SetDefaultExtension(filterspec[i].pszSpec);
+      // "*.jpg;*.png" => "*.jpg"
+      std::wstring first_spec = spec.substr(0, spec.find(L';'));
+      // "*.jpg" => "jpg"
+      dialog->SetDefaultExtension(first_spec.substr(2).c_str());
       break;
     }
   }
@@ -217,6 +149,8 @@ static void ApplySettings(IFileDialog* dialog, const DialogSettings& settings) {
     SetDefaultFolder(dialog, settings.default_path);
   }
 }
+
+}  // namespace
 
 bool ShowOpenDialogSync(const DialogSettings& settings,
                         std::vector<base::FilePath>* paths) {
@@ -261,14 +195,11 @@ bool ShowOpenDialogSync(const DialogSettings& settings,
     if (FAILED(hr))
       return false;
 
-    wchar_t file_name[MAX_PATH];
-    hr = GetFileNameFromShellItem(item, SIGDN_FILESYSPATH, file_name,
-                                  base::size(file_name));
-
-    if (FAILED(hr))
+    auto path = GetFileNameFromShellItem(item, SIGDN_FILESYSPATH);
+    if (!path)
       return false;
 
-    paths->push_back(base::FilePath(file_name));
+    paths->emplace_back(std::move(*path));
   }
 
   return true;
@@ -276,17 +207,16 @@ bool ShowOpenDialogSync(const DialogSettings& settings,
 
 void ShowOpenDialog(const DialogSettings& settings,
                     gin_helper::Promise<gin_helper::Dictionary> promise) {
-  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(promise.isolate());
-  RunState run_state;
-  if (!CreateDialogThread(&run_state)) {
-    dict.Set("canceled", true);
-    dict.Set("filePaths", std::vector<base::FilePath>());
+  auto done = [](gin_helper::Promise<gin_helper::Dictionary> promise,
+                 bool success, std::vector<base::FilePath> result) {
+    v8::HandleScope handle_scope(promise.isolate());
+    auto dict = gin::Dictionary::CreateEmpty(promise.isolate());
+    dict.Set("canceled", !success);
+    dict.Set("filePaths", result);
     promise.Resolve(dict);
-  } else {
-    run_state.dialog_thread->task_runner()->PostTask(
-        FROM_HERE, base::BindOnce(&RunOpenDialogInNewThread, run_state,
-                                  settings, std::move(promise)));
-  }
+  };
+  dialog_thread::Run(base::BindOnce(ShowOpenDialogSync, settings),
+                     base::BindOnce(done, std::move(promise)));
 }
 
 bool ShowSaveDialogSync(const DialogSettings& settings, base::FilePath* path) {
@@ -326,18 +256,16 @@ bool ShowSaveDialogSync(const DialogSettings& settings, base::FilePath* path) {
 
 void ShowSaveDialog(const DialogSettings& settings,
                     gin_helper::Promise<gin_helper::Dictionary> promise) {
-  RunState run_state;
-  if (!CreateDialogThread(&run_state)) {
-    gin_helper::Dictionary dict =
-        gin::Dictionary::CreateEmpty(promise.isolate());
-    dict.Set("canceled", true);
-    dict.Set("filePath", base::FilePath());
+  auto done = [](gin_helper::Promise<gin_helper::Dictionary> promise,
+                 bool success, base::FilePath result) {
+    v8::HandleScope handle_scope(promise.isolate());
+    auto dict = gin::Dictionary::CreateEmpty(promise.isolate());
+    dict.Set("canceled", !success);
+    dict.Set("filePath", result);
     promise.Resolve(dict);
-  } else {
-    run_state.dialog_thread->task_runner()->PostTask(
-        FROM_HERE, base::BindOnce(&RunSaveDialogInNewThread, run_state,
-                                  settings, std::move(promise)));
-  }
+  };
+  dialog_thread::Run(base::BindOnce(ShowSaveDialogSync, settings),
+                     base::BindOnce(done, std::move(promise)));
 }
 
 }  // namespace file_dialog

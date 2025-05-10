@@ -41,6 +41,7 @@ To help manage these patch sets, we provide two tools: `git-import-patches` and 
 ### Usage
 
 #### Adding a new patch
+
 ```bash
 $ cd src/third_party/electron_node
 $ vim some/code/file.cc
@@ -48,11 +49,13 @@ $ git commit
 $ ../../electron/script/git-export-patches -o ../../electron/patches/node
 ```
 
-> **NOTE**: `git-export-patches` ignores any uncommitted files, so you must create a commit if you want your changes to be exported. The subject line of the commit message will be used to derive the patch file name, and the body of the commit message should include the reason for the patch's existence.
+> [!NOTE]
+> `git-export-patches` ignores any uncommitted files, so you must create a commit if you want your changes to be exported. The subject line of the commit message will be used to derive the patch file name, and the body of the commit message should include the reason for the patch's existence.
 
 Re-exporting patches will sometimes cause shasums in unrelated patches to change. This is generally harmless and can be ignored (but go ahead and add those changes to your PR, it'll stop them from showing up for other people).
 
 #### Editing an existing patch
+
 ```bash
 $ cd src/v8
 $ vim some/code/file.cc
@@ -63,7 +66,10 @@ $ git rebase --autosquash -i [COMMIT_SHA]^
 $ ../electron/script/git-export-patches -o ../electron/patches/v8
 ```
 
+Note that the `^` symbol [can cause trouble on Windows](https://stackoverflow.com/questions/14203952/git-reset-asks-more/14204318#14204318). The workaround is to either quote it `"[COMMIT_SHA]^"` or avoid it `[COMMIT_SHA]~1`.
+
 #### Removing a patch
+
 ```bash
 $ vim src/electron/patches/node/.patches
 # Delete the line with the name of the patch you want to remove
@@ -76,6 +82,7 @@ $ ../../electron/script/git-export-patches -o ../../electron/patches/node
 Note that `git-import-patches` will mark the commit that was `HEAD` when it was run as `refs/patches/upstream-head`. This lets you keep track of which commits are from Electron patches (those that come after `refs/patches/upstream-head`) and which commits are in upstream (those before `refs/patches/upstream-head`).
 
 #### Resolving conflicts
+
 When updating an upstream dependency, patches may fail to apply cleanly. Often, the conflict can be resolved automatically by git with a 3-way merge. You can instruct `git-import-patches` to use the 3-way merge algorithm by passing the `-3` argument:
 
 ```bash

@@ -4,13 +4,14 @@
 
 #include "shell/browser/net/asar/asar_url_loader.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "content/public/browser/file_url_loader.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -22,6 +23,7 @@
 #include "net/http/http_byte_range.h"
 #include "net/http/http_util.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
+#include "shell/browser/net/asar/asar_file_validator.h"
 #include "shell/common/asar/archive.h"
 #include "shell/common/asar/asar_util.h"
 
@@ -59,7 +61,7 @@ class AsarURLLoader : public network::mojom::URLLoader {
  public:
   static void CreateAndStart(
       const network::ResourceRequest& request,
-      network::mojom::URLLoaderRequest loader,
+      mojo::PendingReceiver<network::mojom::URLLoader> loader,
       mojo::PendingRemote<network::mojom::URLLoaderClient> client,
       scoped_refptr<net::HttpResponseHeaders> extra_response_headers) {
     // Owns itself. Will live as long as its URLLoader and URLLoaderClientPtr
@@ -71,16 +73,20 @@ class AsarURLLoader : public network::mojom::URLLoader {
   }
 
   // network::mojom::URLLoader:
-  void FollowRedirect(const std::vector<std::string>& removed_headers,
-                      const net::HttpRequestHeaders& modified_headers,
-                      const base::Optional<GURL>& new_url) override {}
+  void FollowRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_headers,
+      const net::HttpRequestHeaders& modified_cors_exempt_headers,
+      const std::optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
-  void PauseReadingBodyFromNet() override {}
-  void ResumeReadingBodyFromNet() override {}
+
+  // disable copy
+  AsarURLLoader(const AsarURLLoader&) = delete;
+  AsarURLLoader& operator=(const AsarURLLoader&) = delete;
 
  private:
-  AsarURLLoader() {}
+  AsarURLLoader() = default;
   ~AsarURLLoader() override = default;
 
   void Start(const network::ResourceRequest& request,
@@ -105,9 +111,9 @@ class AsarURLLoader : public network::mojom::URLLoader {
     // Determine whether it is an asar file.
     base::FilePath asar_path, relative_path;
     if (!GetAsarArchivePath(path, &asar_path, &relative_path)) {
-      content::CreateFileURLLoader(request, std::move(loader),
-                                   std::move(client), nullptr, false,
-                                   extra_response_headers);
+      content::CreateFileURLLoaderBypassingSecurityChecks(
+          request, std::move(loader), std::move(client), nullptr, false,
+          extra_response_headers);
       MaybeDeleteSelf();
       return;
     }
@@ -124,6 +130,7 @@ class AsarURLLoader : public network::mojom::URLLoader {
       OnClientComplete(net::ERR_FILE_NOT_FOUND);
       return;
     }
+    bool is_verifying_file = info.integrity.has_value();
 
     // For unpacked path, read like normal file.
     base::FilePath real_path;
@@ -132,8 +139,10 @@ class AsarURLLoader : public network::mojom::URLLoader {
       info.offset = 0;
     }
 
-    mojo::DataPipe pipe(kDefaultFileUrlPipeSize);
-    if (!pipe.consumer_handle.is_valid()) {
+    mojo::ScopedDataPipeProducerHandle producer_handle;
+    mojo::ScopedDataPipeConsumerHandle consumer_handle;
+    if (mojo::CreateDataPipe(kDefaultFileUrlPipeSize, producer_handle,
+                             consumer_handle) != MOJO_RESULT_OK) {
       OnClientComplete(net::ERR_FAILED);
       return;
     }
@@ -144,25 +153,39 @@ class AsarURLLoader : public network::mojom::URLLoader {
     base::File file(info.unpacked ? real_path : archive->path(),
                     base::File::FLAG_OPEN | base::File::FLAG_READ);
     auto file_data_source =
-        std::make_unique<mojo::FileDataSource>(std::move(file));
-    mojo::DataPipeProducer::DataSource* data_source = file_data_source.get();
+        std::make_unique<mojo::FileDataSource>(file.Duplicate());
+    std::unique_ptr<mojo::DataPipeProducer::DataSource> readable_data_source;
+    mojo::FileDataSource* file_data_source_raw = file_data_source.get();
+    AsarFileValidator* file_validator_raw = nullptr;
+    uint32_t block_size = 0;
+    if (info.integrity.has_value()) {
+      block_size = info.integrity.value().block_size;
+      auto asar_validator = std::make_unique<AsarFileValidator>(
+          std::move(info.integrity.value()), std::move(file));
+      file_validator_raw = asar_validator.get();
+      readable_data_source = std::make_unique<mojo::FilteredDataSource>(
+          std::move(file_data_source), std::move(asar_validator));
+    } else {
+      readable_data_source = std::move(file_data_source);
+    }
 
-    std::vector<char> initial_read_buffer(net::kMaxBytesToSniff);
-    auto read_result =
-        data_source->Read(info.offset, base::span<char>(initial_read_buffer));
+    std::vector<char> initial_read_buffer(
+        std::min(static_cast<uint32_t>(net::kMaxBytesToSniff), info.size));
+    auto read_result = readable_data_source.get()->Read(
+        info.offset, base::span<char>(initial_read_buffer));
     if (read_result.result != MOJO_RESULT_OK) {
       OnClientComplete(ConvertMojoResultToNetError(read_result.result));
       return;
     }
 
-    std::string range_header;
+    auto range_header =
+        request.headers.GetHeader(net::HttpRequestHeaders::kRange);
     net::HttpByteRange byte_range;
-    if (request.headers.GetHeader(net::HttpRequestHeaders::kRange,
-                                  &range_header)) {
+    if (range_header) {
       // Handle a simple Range header for a single range.
       std::vector<net::HttpByteRange> ranges;
       bool fail = false;
-      if (net::HttpUtil::ParseRangeHeader(range_header, &ranges) &&
+      if (net::HttpUtil::ParseRangeHeader(range_header.value(), &ranges) &&
           ranges.size() == 1) {
         byte_range = ranges[0];
         if (!byte_range.ComputeBounds(info.size))
@@ -177,7 +200,8 @@ class AsarURLLoader : public network::mojom::URLLoader {
       }
     }
 
-    uint64_t first_byte_to_send = 0;
+    uint64_t first_byte_to_send = 0U;
+    uint64_t total_bytes_dropped_from_head = initial_read_buffer.size();
     uint64_t total_bytes_to_send = info.size;
 
     if (byte_range.IsValid()) {
@@ -194,14 +218,15 @@ class AsarURLLoader : public network::mojom::URLLoader {
       // Write any data we read for MIME sniffing, constraining by range where
       // applicable. This will always fit in the pipe (see assertion near
       // |kDefaultFileUrlPipeSize| definition).
-      uint32_t write_size = std::min(
-          static_cast<uint32_t>(read_result.bytes_read - first_byte_to_send),
-          static_cast<uint32_t>(total_bytes_to_send));
-      const uint32_t expected_write_size = write_size;
-      MojoResult result = pipe.producer_handle->WriteData(
-          &initial_read_buffer[first_byte_to_send], &write_size,
-          MOJO_WRITE_DATA_FLAG_NONE);
-      if (result != MOJO_RESULT_OK || write_size != expected_write_size) {
+      const size_t write_size = std::min(
+          (read_result.bytes_read - first_byte_to_send), total_bytes_to_send);
+      base::span<const uint8_t> bytes =
+          base::as_byte_span(initial_read_buffer)
+              .subspan(static_cast<size_t>(first_byte_to_send), write_size);
+      size_t bytes_written = 0;
+      MojoResult result = producer_handle->WriteData(
+          bytes, MOJO_WRITE_DATA_FLAG_NONE, bytes_written);
+      if (result != MOJO_RESULT_OK || write_size != bytes_written) {
         OnFileWritten(result);
         return;
       }
@@ -209,28 +234,86 @@ class AsarURLLoader : public network::mojom::URLLoader {
       // Discount the bytes we just sent from the total range.
       first_byte_to_send = read_result.bytes_read;
       total_bytes_to_send -= write_size;
+    } else if (is_verifying_file &&
+               first_byte_to_send >= static_cast<uint64_t>(block_size)) {
+      // If validation is active and the range of bytes the request wants starts
+      // beyond the first block we need to read the next 4MB-1KB to validate
+      // that block. Then we can skip ahead to the target block in the SetRange
+      // call below If we hit this case it is assumed that none of the data read
+      // will be needed by the producer
+      uint64_t bytes_to_drop = block_size - net::kMaxBytesToSniff;
+      total_bytes_dropped_from_head += bytes_to_drop;
+      std::vector<char> abandoned_buffer(bytes_to_drop);
+      auto abandon_read_result =
+          readable_data_source.get()->Read(info.offset + net::kMaxBytesToSniff,
+                                           base::span<char>(abandoned_buffer));
+      if (abandon_read_result.result != MOJO_RESULT_OK) {
+        OnClientComplete(
+            ConvertMojoResultToNetError(abandon_read_result.result));
+        return;
+      }
     }
 
     if (!net::GetMimeTypeFromFile(path, &head->mime_type)) {
       std::string new_type;
-      net::SniffMimeType(initial_read_buffer.data(), read_result.bytes_read,
-                         request.url, head->mime_type,
-                         net::ForceSniffFileUrlsForHtml::kDisabled, &new_type);
+      net::SniffMimeType(
+          std::string_view(initial_read_buffer.data(), read_result.bytes_read),
+          request.url, head->mime_type,
+          net::ForceSniffFileUrlsForHtml::kDisabled, &new_type);
       head->mime_type.assign(new_type);
       head->did_mime_sniff = true;
     }
     if (head->headers) {
-      head->headers->AddHeader(
-          base::StringPrintf("%s: %s", net::HttpRequestHeaders::kContentType,
-                             head->mime_type.c_str()));
+      head->headers->AddHeader(net::HttpRequestHeaders::kContentType,
+                               head->mime_type);
     }
-    client_->OnReceiveResponse(std::move(head));
-    client_->OnStartLoadingResponseBody(std::move(pipe.consumer_handle));
+    client_->OnReceiveResponse(std::move(head), std::move(consumer_handle),
+                               std::nullopt);
 
     if (total_bytes_to_send == 0) {
       // There's definitely no more data, so we're already done.
+      // We provide the range data to the file validator so that
+      // it can validate the tiny amount of data we did send
+      if (file_validator_raw)
+        file_validator_raw->SetRange(info.offset + first_byte_to_send,
+                                     total_bytes_dropped_from_head,
+                                     info.offset + info.size);
       OnFileWritten(MOJO_RESULT_OK);
       return;
+    }
+
+    if (is_verifying_file) {
+      int start_block = first_byte_to_send / block_size;
+
+      // If we're starting from the first block, we might not be starting from
+      // where we sniffed. We might be a few KB into a file so we need to read
+      // the data in the middle so it gets hashed.
+      //
+      // If we're starting from a later block we might be starting half-way
+      // through the block regardless of what was sniffed.  We need to read the
+      // data from the start of our initial block up to the start of our actual
+      // read point so it gets hashed.
+      uint64_t bytes_to_drop =
+          start_block == 0 ? first_byte_to_send - net::kMaxBytesToSniff
+                           : first_byte_to_send - (start_block * block_size);
+      if (file_validator_raw)
+        file_validator_raw->SetCurrentBlock(start_block);
+
+      if (bytes_to_drop > 0) {
+        uint64_t dropped_bytes_offset =
+            info.offset + (start_block * block_size);
+        if (start_block == 0)
+          dropped_bytes_offset += net::kMaxBytesToSniff;
+        total_bytes_dropped_from_head += bytes_to_drop;
+        std::vector<char> abandoned_buffer(bytes_to_drop);
+        auto abandon_read_result = readable_data_source.get()->Read(
+            dropped_bytes_offset, base::span<char>(abandoned_buffer));
+        if (abandon_read_result.result != MOJO_RESULT_OK) {
+          OnClientComplete(
+              ConvertMojoResultToNetError(abandon_read_result.result));
+          return;
+        }
+      }
     }
 
     // In case of a range request, seek to the appropriate position before
@@ -238,14 +321,18 @@ class AsarURLLoader : public network::mojom::URLLoader {
     // (i.e., no range request) this Seek is effectively a no-op.
     //
     // Note that in Electron we also need to add file offset.
-    file_data_source->SetRange(
+    file_data_source_raw->SetRange(
         first_byte_to_send + info.offset,
         first_byte_to_send + info.offset + total_bytes_to_send);
+    if (file_validator_raw)
+      file_validator_raw->SetRange(info.offset + first_byte_to_send,
+                                   total_bytes_dropped_from_head,
+                                   info.offset + info.size);
 
-    data_producer_ = std::make_unique<mojo::DataPipeProducer>(
-        std::move(pipe.producer_handle));
+    data_producer_ =
+        std::make_unique<mojo::DataPipeProducer>(std::move(producer_handle));
     data_producer_->Write(
-        std::move(file_data_source),
+        std::move(readable_data_source),
         base::BindOnce(&AsarURLLoader::OnFileWritten, base::Unretained(this)));
   }
 
@@ -293,19 +380,17 @@ class AsarURLLoader : public network::mojom::URLLoader {
   // It is used to set some of the URLLoaderCompletionStatus data passed back
   // to the URLLoaderClients (eg SimpleURLLoader).
   size_t total_bytes_written_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(AsarURLLoader);
 };
 
 }  // namespace
 
 void CreateAsarURLLoader(
     const network::ResourceRequest& request,
-    network::mojom::URLLoaderRequest loader,
+    mojo::PendingReceiver<network::mojom::URLLoader> loader,
     mojo::PendingRemote<network::mojom::URLLoaderClient> client,
     scoped_refptr<net::HttpResponseHeaders> extra_response_headers) {
-  auto task_runner = base::CreateSequencedTaskRunner(
-      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+  auto task_runner = base::ThreadPool::CreateSequencedTaskRunner(
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   task_runner->PostTask(
       FROM_HERE,

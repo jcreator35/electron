@@ -2,16 +2,22 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_FACTORY_H_
-#define SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_FACTORY_H_
+#ifndef ELECTRON_SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_FACTORY_H_
+#define ELECTRON_SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_FACTORY_H_
 
-#include "base/memory/singleton.h"
+#include <memory>
+
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
 class KeyedService;
 
-namespace contenet {
+namespace content {
 class BrowserContext;
+}
+
+namespace base {
+template <typename T>
+class NoDestructor;
 }
 
 namespace electron {
@@ -33,13 +39,13 @@ class NetworkContextServiceFactory : public BrowserContextKeyedServiceFactory {
       delete;
 
  private:
-  friend struct base::DefaultSingletonTraits<NetworkContextServiceFactory>;
+  friend base::NoDestructor<NetworkContextServiceFactory>;
 
   NetworkContextServiceFactory();
   ~NetworkContextServiceFactory() override;
 
   // BrowserContextKeyedServiceFactory implementation:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
   content::BrowserContext* GetBrowserContextToUse(
       content::BrowserContext* context) const override;
@@ -47,4 +53,4 @@ class NetworkContextServiceFactory : public BrowserContextKeyedServiceFactory {
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_FACTORY_H_
+#endif  // ELECTRON_SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_FACTORY_H_

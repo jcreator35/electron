@@ -2,14 +2,17 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_UI_WIN_NOTIFY_ICON_HOST_H_
-#define SHELL_BROWSER_UI_WIN_NOTIFY_ICON_HOST_H_
+#ifndef ELECTRON_SHELL_BROWSER_UI_WIN_NOTIFY_ICON_HOST_H_
+#define ELECTRON_SHELL_BROWSER_UI_WIN_NOTIFY_ICON_HOST_H_
 
 #include <windows.h>
 
+#include <optional>
 #include <vector>
 
-#include "base/macros.h"
+#include "shell/common/gin_converters/guid_converter.h"
+
+const GUID GUID_DEFAULT = {0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0}};
 
 namespace electron {
 
@@ -20,7 +23,11 @@ class NotifyIconHost {
   NotifyIconHost();
   ~NotifyIconHost();
 
-  NotifyIcon* CreateNotifyIcon();
+  // disable copy
+  NotifyIconHost(const NotifyIconHost&) = delete;
+  NotifyIconHost& operator=(const NotifyIconHost&) = delete;
+
+  NotifyIcon* CreateNotifyIcon(std::optional<UUID> guid);
   void Remove(NotifyIcon* notify_icon);
 
  private:
@@ -58,9 +65,10 @@ class NotifyIconHost {
   // reset our status icons.
   UINT taskbar_created_message_ = 0;
 
-  DISALLOW_COPY_AND_ASSIGN(NotifyIconHost);
+  class MouseEnteredExitedDetector;
+  std::unique_ptr<MouseEnteredExitedDetector> mouse_entered_exited_detector_;
 };
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_UI_WIN_NOTIFY_ICON_HOST_H_
+#endif  // ELECTRON_SHELL_BROWSER_UI_WIN_NOTIFY_ICON_HOST_H_

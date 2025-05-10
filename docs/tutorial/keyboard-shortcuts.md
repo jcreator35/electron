@@ -1,64 +1,180 @@
 # Keyboard Shortcuts
 
-> Configure local and global keyboard shortcuts
+## Overview
 
-## Local Shortcuts
+This feature allows you to configure local and global keyboard shortcuts
+for your Electron application.
 
-You can use the [Menu] module to configure keyboard shortcuts that will
-be triggered only when the app is focused. To do so, specify an
-[`accelerator`] property when creating a [MenuItem].
+## Example
 
-```js
-const { Menu, MenuItem } = require('electron')
-const menu = new Menu()
+### Local Shortcuts
 
-menu.append(new MenuItem({
-  label: 'Print',
-  accelerator: 'CmdOrCtrl+P',
-  click: () => { console.log('time to print stuff') }
-}))
-```
+Local keyboard shortcuts are triggered only when the application is focused.
+To configure a local keyboard shortcut, you need to specify an [`accelerator`][]
+property when creating a [MenuItem][] within the [Menu][] module.
 
-You can configure different key combinations based on the user's operating system.
+Starting with a working application from the
+[tutorial starter code][tutorial-starter-code], update the `main.js` to be:
 
-```js
-{
-  accelerator: process.platform === 'darwin' ? 'Alt+Cmd+I' : 'Ctrl+Shift+I'
-}
-```
+```fiddle docs/fiddles/features/keyboard-shortcuts/local
+const { app, BrowserWindow, Menu, MenuItem } = require('electron/main')
 
-## Global Shortcuts
-
-You can use the [globalShortcut] module to detect keyboard events even when
-the application does not have keyboard focus.
-
-```js
-const { app, globalShortcut } = require('electron')
-
-app.on('ready', () => {
-  globalShortcut.register('CommandOrControl+X', () => {
-    console.log('CommandOrControl+X is pressed')
+function createWindow () {
+  const win = new BrowserWindow({
+    width: 800,
+    height: 600
   })
+
+  win.loadFile('index.html')
+}
+
+const menu = new Menu()
+menu.append(new MenuItem({
+  label: 'Electron',
+  submenu: [{
+    role: 'help',
+    accelerator: process.platform === 'darwin' ? 'Alt+Cmd+I' : 'Alt+Shift+I',
+    click: () => { console.log('Electron rocks!') }
+  }]
+}))
+
+Menu.setApplicationMenu(menu)
+
+app.whenReady().then(createWindow)
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
+
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow()
+  }
 })
 ```
 
-## Shortcuts within a BrowserWindow
+> NOTE: In the code above, you can see that the accelerator differs based on the
+user's operating system. For MacOS, it is `Alt+Cmd+I`, whereas for Linux and
+Windows, it is `Alt+Shift+I`.
 
-If you want to handle keyboard shortcuts for a [BrowserWindow], you can use the `keyup` and `keydown` event listeners on the window object inside the renderer process.
+After launching the Electron application, you should see the application menu
+along with the local shortcut you just defined:
 
-```js
-window.addEventListener('keyup', doSomething, true)
+![Menu with a local shortcut](../images/local-shortcut.png)
+
+If you click `Help` or press the defined accelerator and then open the terminal
+that you ran your Electron application from, you will see the message that was
+generated after triggering the `click` event: "Electron rocks!".
+
+### Global Shortcuts
+
+To configure a global keyboard shortcut, you need to use the [globalShortcut][]
+module to detect keyboard events even when the application does not have
+keyboard focus.
+
+Starting with a working application from the
+[tutorial starter code][tutorial-starter-code], update the `main.js` to be:
+
+```fiddle docs/fiddles/features/keyboard-shortcuts/global
+const { app, BrowserWindow, globalShortcut } = require('electron/main')
+
+function createWindow () {
+  const win = new BrowserWindow({
+    width: 800,
+    height: 600
+  })
+
+  win.loadFile('index.html')
+}
+
+app.whenReady().then(() => {
+  globalShortcut.register('Alt+CommandOrControl+I', () => {
+    console.log('Electron loves global shortcuts!')
+  })
+}).then(createWindow)
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
+
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow()
+  }
+})
 ```
 
-Note the third parameter `true` which means the listener will always receive key presses before other listeners so they can't have `stopPropagation()` called on them.
+> NOTE: In the code above, the `CommandOrControl` combination uses `Command`
+on macOS and `Control` on Windows/Linux.
+
+After launching the Electron application, if you press the defined key
+combination then open the terminal that you ran your Electron application from,
+you will see that Electron loves global shortcuts!
+
+### Shortcuts within a BrowserWindow
+
+#### Using web APIs
+
+If you want to handle keyboard shortcuts within a [BrowserWindow][], you can
+listen for the `keyup` and `keydown` [DOM events][dom-events] inside the
+renderer process using the [addEventListener() API][addEventListener-api].
+
+```fiddle docs/fiddles/features/keyboard-shortcuts/web-apis|focus=renderer.js
+function handleKeyPress (event) {
+  // You can put code here to handle the keypress.
+  document.getElementById('last-keypress').innerText = event.key
+  console.log(`You pressed ${event.key}`)
+}
+
+window.addEventListener('keyup', handleKeyPress, true)
+```
+
+> [!NOTE]
+> The third parameter `true` indicates that the listener will always receive
+> key presses before other listeners so they can't have `stopPropagation()`
+> called on them.
+
+#### Intercepting events in the main process
 
 The [`before-input-event`](../api/web-contents.md#event-before-input-event) event
 is emitted before dispatching `keydown` and `keyup` events in the page. It can
 be used to catch and handle custom shortcuts that are not visible in the menu.
 
-If you don't want to do manual shortcut parsing there are libraries that do advanced key detection such as [mousetrap].
+Starting with a working application from the
+[tutorial starter code][tutorial-starter-code], update the `main.js` file with the
+following lines:
 
-```js
+```fiddle docs/fiddles/features/keyboard-shortcuts/interception-from-main
+const { app, BrowserWindow } = require('electron/main')
+
+app.whenReady().then(() => {
+  const win = new BrowserWindow({ width: 800, height: 600 })
+
+  win.loadFile('index.html')
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.key.toLowerCase() === 'i') {
+      console.log('Pressed Control+I')
+      event.preventDefault()
+    }
+  })
+})
+```
+
+After launching the Electron application, if you open the terminal that you ran
+your Electron application from and press `Ctrl+I` key combination, you will
+see that this key combination was successfully intercepted.
+
+#### Using third-party libraries
+
+If you don't want to do manual shortcut parsing, there are libraries that do
+advanced key detection, such as [mousetrap][]. Below are examples of usage of the
+`mousetrap` running in the Renderer process:
+
+```js @ts-nocheck
 Mousetrap.bind('4', () => { console.log('4') })
 Mousetrap.bind('?', () => { console.log('show shortcuts!') })
 Mousetrap.bind('esc', () => { console.log('escape') }, 'keyup')
@@ -90,3 +206,6 @@ Mousetrap.bind('up up down down left right left right b a enter', () => {
 [`accelerator`]: ../api/accelerator.md
 [BrowserWindow]: ../api/browser-window.md
 [mousetrap]: https://github.com/ccampbell/mousetrap
+[dom-events]: https://developer.mozilla.org/en-US/docs/Web/Events
+[addEventListener-api]: https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener
+[tutorial-starter-code]: tutorial-2-first-app.md#final-starter-code

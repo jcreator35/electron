@@ -2,26 +2,29 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_COMMON_GIN_CONVERTERS_VALUE_CONVERTER_H_
-#define SHELL_COMMON_GIN_CONVERTERS_VALUE_CONVERTER_H_
+#ifndef ELECTRON_SHELL_COMMON_GIN_CONVERTERS_VALUE_CONVERTER_H_
+#define ELECTRON_SHELL_COMMON_GIN_CONVERTERS_VALUE_CONVERTER_H_
 
+#include "base/values.h"
 #include "gin/converter.h"
-
-namespace base {
-class DictionaryValue;
-class ListValue;
-class Value;
-}  // namespace base
 
 namespace gin {
 
 template <>
-struct Converter<base::DictionaryValue> {
+struct Converter<base::ValueView> {
+  static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
+                                   const base::ValueView val);
+};
+
+template <>
+struct Converter<base::Value::Dict> {
   static bool FromV8(v8::Isolate* isolate,
                      v8::Local<v8::Value> val,
-                     base::DictionaryValue* out);
+                     base::Value::Dict* out);
   static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
-                                   const base::DictionaryValue& val);
+                                   const base::Value::Dict& val) {
+    return gin::ConvertToV8(isolate, base::ValueView{val});
+  }
 };
 
 template <>
@@ -30,18 +33,22 @@ struct Converter<base::Value> {
                      v8::Local<v8::Value> val,
                      base::Value* out);
   static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
-                                   const base::Value& val);
+                                   const base::Value& val) {
+    return gin::ConvertToV8(isolate, base::ValueView{val});
+  }
 };
 
 template <>
-struct Converter<base::ListValue> {
+struct Converter<base::Value::List> {
   static bool FromV8(v8::Isolate* isolate,
                      v8::Local<v8::Value> val,
-                     base::ListValue* out);
+                     base::Value::List* out);
   static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
-                                   const base::ListValue& val);
+                                   const base::Value::List& val) {
+    return gin::ConvertToV8(isolate, base::ValueView{val});
+  }
 };
 
 }  // namespace gin
 
-#endif  // SHELL_COMMON_GIN_CONVERTERS_VALUE_CONVERTER_H_
+#endif  // ELECTRON_SHELL_COMMON_GIN_CONVERTERS_VALUE_CONVERTER_H_

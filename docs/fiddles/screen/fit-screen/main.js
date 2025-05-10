@@ -1,16 +1,13 @@
 // Retrieve information about screen size, displays, cursor position, etc.
 //
 // For more info, see:
-// https://electronjs.org/docs/api/screen
+// https://www.electronjs.org/docs/latest/api/screen
 
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, screen } = require('electron/main')
 
 let mainWindow = null
 
-app.on('ready', () => {
-  // We cannot require the screen module until the app is ready.
-  const { screen } = require('electron')
-
+app.whenReady().then(() => {
   // Create a window that fills the screen's available work area.
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width, height } = primaryDisplay.workAreaSize

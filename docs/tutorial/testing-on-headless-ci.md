@@ -3,7 +3,7 @@
 Being based on Chromium, Electron requires a display driver to function.
 If Chromium can't find a display driver, Electron will fail to launch -
 and therefore not executing any of your tests, regardless of how you are running
-them. Testing Electron-based apps on Travis, Circle, Jenkins or similar Systems
+them. Testing Electron-based apps on Travis, CircleCI, Jenkins or similar Systems
 requires therefore a little bit of configuration. In essence, we need to use
 a virtual display driver.
 
@@ -32,27 +32,15 @@ xvfb-maybe electron-mocha ./test/*.js
 
 ### Travis CI
 
-On Travis, your `.travis.yml` should look roughly like this:
-
-```yml
-addons:
-  apt:
-    packages:
-      - xvfb
-
-install:
-  - export DISPLAY=':99.0'
-  - Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
-```
+For Travis, see its [docs on using Xvfb](https://docs.travis-ci.com/user/gui-and-headless-browsers/#using-xvfb-to-run-tests-that-require-a-gui).
 
 ### Jenkins
 
 For Jenkins, a [Xvfb plugin is available](https://wiki.jenkins-ci.org/display/JENKINS/Xvfb+Plugin).
 
-### Circle CI
+### CircleCI
 
-Circle CI is awesome and has Xvfb and `$DISPLAY`
-[already set up, so no further configuration is required](https://circleci.com/docs/environment#browsers).
+CircleCI is awesome and has Xvfb and `$DISPLAY` already set up, so no further configuration is required.
 
 ### AppVeyor
 

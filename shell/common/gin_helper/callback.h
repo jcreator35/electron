@@ -2,18 +2,19 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_COMMON_GIN_HELPER_CALLBACK_H_
-#define SHELL_COMMON_GIN_HELPER_CALLBACK_H_
+#ifndef ELECTRON_SHELL_COMMON_GIN_HELPER_CALLBACK_H_
+#define ELECTRON_SHELL_COMMON_GIN_HELPER_CALLBACK_H_
 
+#include <array>
 #include <utility>
-#include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "shell/common/gin_converters/std_converter.h"
 #include "shell/common/gin_helper/function_template.h"
 #include "shell/common/gin_helper/locker.h"
-
-// Implements safe convertions between JS functions and base::Callback.
+#include "v8/include/v8-function.h"
+#include "v8/include/v8-microtask-queue.h"
+// Implements safe conversions between JS functions and base::RepeatingCallback.
 
 namespace gin_helper {
 
@@ -47,12 +48,12 @@ struct V8FunctionInvoker<v8::Local<v8::Value>(ArgTypes...)> {
     v8::EscapableHandleScope handle_scope(isolate);
     if (!function.IsAlive())
       return v8::Null(isolate);
-    v8::MicrotasksScope script_scope(isolate,
-                                     v8::MicrotasksScope::kRunMicrotasks);
     v8::Local<v8::Function> holder = function.NewHandle(isolate);
-    v8::Local<v8::Context> context = holder->CreationContext();
+    v8::Local<v8::Context> context = holder->GetCreationContextChecked();
+    v8::MicrotasksScope microtasks_scope(context,
+                                         v8::MicrotasksScope::kRunMicrotasks);
     v8::Context::Scope context_scope(context);
-    std::vector<v8::Local<v8::Value>> args{
+    std::array<v8::Local<v8::Value>, sizeof...(raw)> args{
         gin::ConvertToV8(isolate, std::forward<ArgTypes>(raw))...};
     v8::MaybeLocal<v8::Value> ret = holder->Call(
         context, holder, args.size(), args.empty() ? nullptr : &args.front());
@@ -72,12 +73,12 @@ struct V8FunctionInvoker<void(ArgTypes...)> {
     v8::HandleScope handle_scope(isolate);
     if (!function.IsAlive())
       return;
-    v8::MicrotasksScope script_scope(isolate,
-                                     v8::MicrotasksScope::kRunMicrotasks);
     v8::Local<v8::Function> holder = function.NewHandle(isolate);
-    v8::Local<v8::Context> context = holder->CreationContext();
+    v8::Local<v8::Context> context = holder->GetCreationContextChecked();
+    v8::MicrotasksScope microtasks_scope(context,
+                                         v8::MicrotasksScope::kRunMicrotasks);
     v8::Context::Scope context_scope(context);
-    std::vector<v8::Local<v8::Value>> args{
+    std::array<v8::Local<v8::Value>, sizeof...(raw)> args{
         gin::ConvertToV8(isolate, std::forward<ArgTypes>(raw))...};
     holder
         ->Call(context, holder, args.size(),
@@ -96,12 +97,12 @@ struct V8FunctionInvoker<ReturnType(ArgTypes...)> {
     ReturnType ret = ReturnType();
     if (!function.IsAlive())
       return ret;
-    v8::MicrotasksScope script_scope(isolate,
-                                     v8::MicrotasksScope::kRunMicrotasks);
     v8::Local<v8::Function> holder = function.NewHandle(isolate);
-    v8::Local<v8::Context> context = holder->CreationContext();
+    v8::Local<v8::Context> context = holder->GetCreationContextChecked();
+    v8::MicrotasksScope microtasks_scope(context,
+                                         v8::MicrotasksScope::kRunMicrotasks);
     v8::Context::Scope context_scope(context);
-    std::vector<v8::Local<v8::Value>> args{
+    std::array<v8::Local<v8::Value>, sizeof...(raw)> args{
         gin::ConvertToV8(isolate, std::forward<ArgTypes>(raw))...};
     v8::Local<v8::Value> result;
     auto maybe_result = holder->Call(context, holder, args.size(),
@@ -112,10 +113,10 @@ struct V8FunctionInvoker<ReturnType(ArgTypes...)> {
   }
 };
 
-// Helper to pass a C++ funtion to JavaScript.
-using Translater = base::Callback<void(gin::Arguments* args)>;
-v8::Local<v8::Value> CreateFunctionFromTranslater(v8::Isolate* isolate,
-                                                  const Translater& translater,
+// Helper to pass a C++ function to JavaScript.
+using Translator = base::RepeatingCallback<void(gin::Arguments* args)>;
+v8::Local<v8::Value> CreateFunctionFromTranslator(v8::Isolate* isolate,
+                                                  const Translator& translator,
                                                   bool one_time);
 v8::Local<v8::Value> BindFunctionWith(v8::Isolate* isolate,
                                       v8::Local<v8::Context> context,
@@ -129,10 +130,11 @@ struct NativeFunctionInvoker {};
 
 template <typename ReturnType, typename... ArgTypes>
 struct NativeFunctionInvoker<ReturnType(ArgTypes...)> {
-  static void Go(base::Callback<ReturnType(ArgTypes...)> val,
+  static void Go(base::RepeatingCallback<ReturnType(ArgTypes...)> val,
                  gin::Arguments* args) {
-    using Indices = typename IndicesGenerator<sizeof...(ArgTypes)>::type;
-    Invoker<Indices, ArgTypes...> invoker(args, 0);
+    using Indices = std::index_sequence_for<ArgTypes...>;
+    Invoker<Indices, ArgTypes...> invoker(args,
+                                          {.holder_is_first_argument = false});
     if (invoker.IsOK())
       invoker.DispatchToCallback(val);
   }
@@ -144,10 +146,11 @@ template <typename Sig>
 v8::Local<v8::Value> CallbackToV8Leaked(
     v8::Isolate* isolate,
     const base::RepeatingCallback<Sig>& val) {
-  Translater translater = base::Bind(&NativeFunctionInvoker<Sig>::Go, val);
-  return CreateFunctionFromTranslater(isolate, translater, false);
+  Translator translator =
+      base::BindRepeating(&NativeFunctionInvoker<Sig>::Go, val);
+  return CreateFunctionFromTranslator(isolate, translator, false);
 }
 
 }  // namespace gin_helper
 
-#endif  // SHELL_COMMON_GIN_HELPER_CALLBACK_H_
+#endif  // ELECTRON_SHELL_COMMON_GIN_HELPER_CALLBACK_H_

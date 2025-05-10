@@ -2,8 +2,8 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_RELAUNCHER_H_
-#define SHELL_BROWSER_RELAUNCHER_H_
+#ifndef ELECTRON_SHELL_BROWSER_RELAUNCHER_H_
+#define ELECTRON_SHELL_BROWSER_RELAUNCHER_H_
 
 // relauncher implements main browser application relaunches across platforms.
 // When a browser wants to relaunch itself, it can't simply fork off a new
@@ -29,12 +29,9 @@
 // in light of PID reuse, so the parent must remain alive long enough for the
 // relauncher to set up its kqueue.
 
-#include <string>
-#include <vector>
-
 #include "base/command_line.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "base/process/process_handle.h"
 #endif
 
@@ -44,16 +41,15 @@ struct MainFunctionParams;
 
 namespace relauncher {
 
-using CharType = base::CommandLine::CharType;
 using StringType = base::CommandLine::StringType;
 using StringVector = base::CommandLine::StringVector;
 
 // Relaunches the application using the helper application associated with the
 // currently running instance of Chrome in the parent browser process as the
-// executable for the relauncher process. |args| is an argv-style vector of
-// command line arguments of the form normally passed to execv. args[0] is
+// executable for the relauncher process. |argv| is an argv-style vector of
+// command line arguments of the form normally passed to execv. argv[0] is
 // also the path to the relaunched process. Because the relauncher process
-// will ultimately launch the relaunched process via Launch Services, args[0]
+// will ultimately launch the relaunched process via Launch Services, argv[0]
 // may be either a pathname to an executable file or a pathname to an .app
 // bundle directory. The caller should exit soon after RelaunchApp returns
 // successfully. Returns true on success, although some failures can occur
@@ -63,7 +59,7 @@ bool RelaunchApp(const StringVector& argv);
 
 // Identical to RelaunchApp, but uses |helper| as the path to the relauncher
 // process, and allows additional arguments to be supplied to the relauncher
-// process in relauncher_args. Unlike args[0], |helper| must be a pathname to
+// process in relauncher_args. Unlike argv[0], |helper| must be a pathname to
 // an executable file. The helper path given must be from the same version of
 // Chrome as the running parent browser process, as there are no guarantees
 // that the parent and relauncher processes from different versions will be
@@ -72,33 +68,21 @@ bool RelaunchApp(const StringVector& argv);
 // location's helper.
 bool RelaunchAppWithHelper(const base::FilePath& helper,
                            const StringVector& relauncher_args,
-                           const StringVector& args);
+                           const StringVector& argv);
 
 // The entry point from ChromeMain into the relauncher process.
 int RelauncherMain(const content::MainFunctionParams& main_parameters);
 
 namespace internal {
 
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_POSIX)
 // The "magic" file descriptor that the relauncher process' write side of the
 // pipe shows up on. Chosen to avoid conflicting with stdin, stdout, and
 // stderr.
 extern const int kRelauncherSyncFD;
 #endif
 
-// The "type" argument identifying a relauncher process ("--type=relauncher").
-extern const CharType* kRelauncherTypeArg;
-
-// The argument separating arguments intended for the relauncher process from
-// those intended for the relaunched process. "---" is chosen instead of "--"
-// because CommandLine interprets "--" as meaning "end of switches", but
-// for many purposes, the relauncher process' CommandLine ought to interpret
-// arguments intended for the relaunched process, to get the correct settings
-// for such things as logging and the user-data-dir in case it affects crash
-// reporting.
-extern const CharType* kRelauncherArgSeparator;
-
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 StringType GetWaitEventName(base::ProcessId pid);
 
 StringType ArgvToCommandLineString(const StringVector& argv);
@@ -119,4 +103,4 @@ int LaunchProgram(const StringVector& relauncher_args,
 
 }  // namespace relauncher
 
-#endif  // SHELL_BROWSER_RELAUNCHER_H_
+#endif  // ELECTRON_SHELL_BROWSER_RELAUNCHER_H_

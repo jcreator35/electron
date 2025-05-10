@@ -2,17 +2,26 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_H_
-#define SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_H_
+#ifndef ELECTRON_SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_H_
+#define ELECTRON_SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_H_
 
-#include "base/files/file_path.h"
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/net/proxy_config_monitor.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "mojo/public/cpp/bindings/remote.h"
-#include "services/network/public/mojom/network_context.mojom.h"
-#include "shell/browser/atom_browser_context.h"
+#include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom-forward.h"
+#include "services/network/public/mojom/network_context.mojom-forward.h"
+
+namespace base {
+class FilePath;
+}  // namespace base
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace electron {
+
+class ElectronBrowserContext;
 
 // KeyedService that initializes and provides access to the NetworkContexts for
 // a BrowserContext.
@@ -24,8 +33,10 @@ class NetworkContextService : public KeyedService {
   NetworkContextService(const NetworkContextService&) = delete;
   NetworkContextService& operator=(const NetworkContextService&) = delete;
 
-  // Creates a NetworkContext for the BrowserContext.
-  mojo::Remote<network::mojom::NetworkContext> CreateNetworkContext();
+  void ConfigureNetworkContextParams(
+      network::mojom::NetworkContextParams* network_context_params,
+      cert_verifier::mojom::CertVerifierCreationParams*
+          cert_verifier_creation_params);
 
  private:
   // Creates parameters for the NetworkContext.
@@ -33,10 +44,10 @@ class NetworkContextService : public KeyedService {
       bool in_memory,
       const base::FilePath& path);
 
-  AtomBrowserContext* browser_context_;
+  raw_ptr<ElectronBrowserContext> browser_context_;
   ProxyConfigMonitor proxy_config_monitor_;
 };
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_H_
+#endif  // ELECTRON_SHELL_BROWSER_NET_NETWORK_CONTEXT_SERVICE_H_

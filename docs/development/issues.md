@@ -13,7 +13,7 @@ contribute:
 
 1. By opening the issue for discussion: If you believe that you have found
    a new bug in Electron, you should report it by creating a new issue in
-   the `electron/electron` issue tracker.
+   the [`electron/electron` issue tracker](https://github.com/electron/electron/issues).
 2. By helping to triage the issue: You can do this either by providing
    assistive details (a reproducible test case that demonstrates a bug) or by
    providing suggestions to address the issue.
@@ -24,55 +24,19 @@ contribute:
 
 ## Asking for General Help
 
-["Finding Support"](../tutorial/support.md#finding-support) has a
+[The Electron website](https://www.electronjs.org/community) has a
 list of resources for getting programming help, reporting security issues,
 contributing, and more. Please use the issue tracker for bugs only!
 
 ## Submitting a Bug Report
 
-When opening a new issue in the `electron/electron` issue tracker, users
+To submit a bug report:
+
+When opening a new issue in the [`electron/electron` issue tracker](https://github.com/electron/electron/issues/new/choose), users
 will be presented with a template that should be filled in.
 
-```markdown
-<!--
-Thanks for opening an issue! A few things to keep in mind:
-
-- The issue tracker is only for bugs and feature requests.
-- Before reporting a bug, please try reproducing your issue against
-  the latest version of Electron.
-- If you need general advice, join our Slack: http://atom-slack.herokuapp.com
--->
-
-* Electron version:
-* Operating system:
-
-### Expected behavior
-
-<!-- What do you think should happen? -->
-
-### Actual behavior
-
-<!-- What actually happens? -->
-
-### How to reproduce
-
-<!--
-
-Your best chance of getting this bug looked at quickly is to provide a REPOSITORY that can be cloned and run.
-
-You can fork https://github.com/electron/electron-quick-start and include a link to the branch with your changes.
-
-If you provide a URL, please list the commands required to clone/setup/run your repo e.g.
-
-  $ git clone $YOUR_URL -b $BRANCH
-  $ npm install
-  $ npm start || electron .
-
--->
-```
-
-If you believe that you have found a bug in Electron, please fill out this
-form to the best of your ability.
+If you believe that you have found a bug in Electron, please fill out the template
+to the best of your ability.
 
 The two most important pieces of information needed to evaluate the report are
 a description of the bug and a simple test case to recreate it. It is easier to fix
@@ -93,7 +57,7 @@ unfriendly.
 
 Contributors are encouraged to solve issues collaboratively and help one
 another make progress. If you encounter an issue that you feel is invalid, or
-which contains incorrect information, explain *why* you feel that way with
+which contains incorrect information, explain _why_ you feel that way with
 additional supporting context, and be willing to be convinced that you may
 be wrong. By doing so, we can often reach the correct outcome faster.
 

@@ -2,15 +2,13 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_NOTIFICATIONS_LINUX_LIBNOTIFY_NOTIFICATION_H_
-#define SHELL_BROWSER_NOTIFICATIONS_LINUX_LIBNOTIFY_NOTIFICATION_H_
+#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_LINUX_LIBNOTIFY_NOTIFICATION_H_
+#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_LINUX_LIBNOTIFY_NOTIFICATION_H_
 
-#include <string>
-#include <vector>
-
+#include "base/memory/raw_ptr_exclusion.h"
 #include "library_loaders/libnotify_loader.h"
 #include "shell/browser/notifications/notification.h"
-#include "ui/base/glib/glib_signal.h"
+#include "ui/base/glib/scoped_gsignal.h"
 
 namespace electron {
 
@@ -27,21 +25,17 @@ class LibnotifyNotification : public Notification {
   void Dismiss() override;
 
  private:
-  CHROMEG_CALLBACK_0(LibnotifyNotification,
-                     void,
-                     OnNotificationClosed,
-                     NotifyNotification*);
-  CHROMEG_CALLBACK_1(LibnotifyNotification,
-                     void,
-                     OnNotificationView,
-                     NotifyNotification*,
-                     char*);
+  void OnNotificationClosed(NotifyNotification* notification);
+  static void OnNotificationView(NotifyNotification* notification,
+                                 char* action,
+                                 gpointer user_data);
 
-  NotifyNotification* notification_;
+  RAW_PTR_EXCLUSION NotifyNotification* notification_ = nullptr;
 
-  DISALLOW_COPY_AND_ASSIGN(LibnotifyNotification);
+  ScopedGSignal signal_;
+  bool on_dismissing_ = false;
 };
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_NOTIFICATIONS_LINUX_LIBNOTIFY_NOTIFICATION_H_
+#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_LINUX_LIBNOTIFY_NOTIFICATION_H_

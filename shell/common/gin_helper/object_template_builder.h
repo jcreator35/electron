@@ -2,9 +2,12 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_COMMON_GIN_HELPER_OBJECT_TEMPLATE_BUILDER_H_
-#define SHELL_COMMON_GIN_HELPER_OBJECT_TEMPLATE_BUILDER_H_
+#ifndef ELECTRON_SHELL_COMMON_GIN_HELPER_OBJECT_TEMPLATE_BUILDER_H_
+#define ELECTRON_SHELL_COMMON_GIN_HELPER_OBJECT_TEMPLATE_BUILDER_H_
 
+#include <string_view>
+
+#include "base/memory/raw_ptr.h"
 #include "shell/common/gin_helper/function_template.h"
 
 namespace gin_helper {
@@ -21,34 +24,34 @@ class ObjectTemplateBuilder {
  public:
   ObjectTemplateBuilder(v8::Isolate* isolate,
                         v8::Local<v8::ObjectTemplate> templ);
-  ~ObjectTemplateBuilder();
+  ~ObjectTemplateBuilder() = default;
 
   // It's against Google C++ style to return a non-const ref, but we take some
   // poetic license here in order that all calls to Set() can be via the '.'
   // operator and line up nicely.
   template <typename T>
-  ObjectTemplateBuilder& SetValue(const base::StringPiece& name, T val) {
+  ObjectTemplateBuilder& SetValue(const std::string_view name, T val) {
     return SetImpl(name, ConvertToV8(isolate_, val));
   }
 
   // In the following methods, T and U can be function pointer, member function
-  // pointer, base::Callback, or v8::FunctionTemplate. Most clients will want to
-  // use one of the first two options. Also see gin::CreateFunctionTemplate()
-  // for creating raw function templates.
+  // pointer, base::RepeatingCallback, or v8::FunctionTemplate. Most clients
+  // will want to use one of the first two options. Also see
+  // gin::CreateFunctionTemplate() for creating raw function templates.
   template <typename T>
-  ObjectTemplateBuilder& SetMethod(const base::StringPiece& name,
+  ObjectTemplateBuilder& SetMethod(const std::string_view name,
                                    const T& callback) {
     return SetImpl(name, CallbackTraits<T>::CreateTemplate(isolate_, callback));
   }
   template <typename T>
-  ObjectTemplateBuilder& SetProperty(const base::StringPiece& name,
+  ObjectTemplateBuilder& SetProperty(const std::string_view name,
                                      const T& getter) {
     return SetPropertyImpl(name,
                            CallbackTraits<T>::CreateTemplate(isolate_, getter),
                            v8::Local<v8::FunctionTemplate>());
   }
   template <typename T, typename U>
-  ObjectTemplateBuilder& SetProperty(const base::StringPiece& name,
+  ObjectTemplateBuilder& SetProperty(const std::string_view name,
                                      const T& getter,
                                      const U& setter) {
     return SetPropertyImpl(name,
@@ -59,14 +62,14 @@ class ObjectTemplateBuilder {
   v8::Local<v8::ObjectTemplate> Build();
 
  private:
-  ObjectTemplateBuilder& SetImpl(const base::StringPiece& name,
+  ObjectTemplateBuilder& SetImpl(const std::string_view name,
                                  v8::Local<v8::Data> val);
   ObjectTemplateBuilder& SetPropertyImpl(
-      const base::StringPiece& name,
+      const std::string_view name,
       v8::Local<v8::FunctionTemplate> getter,
       v8::Local<v8::FunctionTemplate> setter);
 
-  v8::Isolate* isolate_;
+  raw_ptr<v8::Isolate> isolate_;
 
   // ObjectTemplateBuilder should only be used on the stack.
   v8::Local<v8::ObjectTemplate> template_;
@@ -74,4 +77,4 @@ class ObjectTemplateBuilder {
 
 }  // namespace gin_helper
 
-#endif  // SHELL_COMMON_GIN_HELPER_OBJECT_TEMPLATE_BUILDER_H_
+#endif  // ELECTRON_SHELL_COMMON_GIN_HELPER_OBJECT_TEMPLATE_BUILDER_H_

@@ -2,19 +2,22 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_NOTIFICATIONS_MAC_COCOA_NOTIFICATION_H_
-#define SHELL_BROWSER_NOTIFICATIONS_MAC_COCOA_NOTIFICATION_H_
+#ifndef ELECTRON_SHELL_BROWSER_NOTIFICATIONS_MAC_COCOA_NOTIFICATION_H_
+#define ELECTRON_SHELL_BROWSER_NOTIFICATIONS_MAC_COCOA_NOTIFICATION_H_
 
 #import <Foundation/Foundation.h>
 
 #include <map>
 #include <string>
-#include <vector>
 
-#include "base/mac/scoped_nsobject.h"
 #include "shell/browser/notifications/notification.h"
 
 namespace electron {
+
+// NSUserNotification is deprecated; all calls should be replaced with
+// UserNotifications.frameworks API
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 class CocoaNotification : public Notification {
  public:
@@ -37,13 +40,14 @@ class CocoaNotification : public Notification {
  private:
   void LogAction(const char* action);
 
-  base::scoped_nsobject<NSUserNotification> notification_;
+  NSUserNotification* __strong notification_;
   std::map<std::string, unsigned> additional_action_indices_;
   unsigned action_index_;
-
-  DISALLOW_COPY_AND_ASSIGN(CocoaNotification);
 };
+
+// -Wdeprecated-declarations
+#pragma clang diagnostic pop
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_NOTIFICATIONS_MAC_COCOA_NOTIFICATION_H_
+#endif  // ELECTRON_SHELL_BROWSER_NOTIFICATIONS_MAC_COCOA_NOTIFICATION_H_

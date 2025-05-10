@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE.chromium file.
 
-#ifndef SHELL_COMMON_GIN_HELPER_WRAPPABLE_H_
-#define SHELL_COMMON_GIN_HELPER_WRAPPABLE_H_
+#ifndef ELECTRON_SHELL_COMMON_GIN_HELPER_WRAPPABLE_H_
+#define ELECTRON_SHELL_COMMON_GIN_HELPER_WRAPPABLE_H_
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "gin/per_isolate_data.h"
 #include "shell/common/gin_helper/constructor.h"
 
 namespace gin_helper {
+
+bool IsValidWrappable(const v8::Local<v8::Value>& obj,
+                      const gin::WrapperInfo* wrapper_info);
 
 namespace internal {
 
@@ -24,9 +27,9 @@ class Wrappable : public WrappableBase {
 
   template <typename Sig>
   static void SetConstructor(v8::Isolate* isolate,
-                             const base::Callback<Sig>& constructor) {
-    v8::Local<v8::FunctionTemplate> templ = CreateFunctionTemplate(
-        isolate, base::Bind(&internal::InvokeNew<Sig>, constructor));
+                             const base::RepeatingCallback<Sig>& constructor) {
+    v8::Local<v8::FunctionTemplate> templ = gin_helper::CreateFunctionTemplate(
+        isolate, base::BindRepeating(&internal::InvokeNew<Sig>, constructor));
     templ->InstanceTemplate()->SetInternalFieldCount(1);
     T::BuildPrototype(isolate, templ);
     gin::PerIsolateData::From(isolate)->SetFunctionTemplate(&kWrapperInfo,
@@ -67,8 +70,6 @@ class Wrappable : public WrappableBase {
 
  private:
   static gin::WrapperInfo kWrapperInfo;
-
-  DISALLOW_COPY_AND_ASSIGN(Wrappable);
 };
 
 // static
@@ -100,4 +101,4 @@ struct Converter<
 
 }  // namespace gin
 
-#endif  // SHELL_COMMON_GIN_HELPER_WRAPPABLE_H_
+#endif  // ELECTRON_SHELL_COMMON_GIN_HELPER_WRAPPABLE_H_

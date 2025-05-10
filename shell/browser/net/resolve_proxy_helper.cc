@@ -6,19 +6,21 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/proxy_resolution/proxy_info.h"
 #include "services/network/public/mojom/network_context.mojom.h"
-#include "shell/browser/atom_browser_context.h"
+#include "shell/browser/electron_browser_context.h"
+#include "shell/browser/net/system_network_context_manager.h"
 
 using content::BrowserThread;
 
 namespace electron {
 
-ResolveProxyHelper::ResolveProxyHelper(AtomBrowserContext* browser_context)
+ResolveProxyHelper::ResolveProxyHelper(ElectronBrowserContext* browser_context)
     : browser_context_(browser_context) {}
 
 ResolveProxyHelper::~ResolveProxyHelper() {
@@ -52,17 +54,24 @@ void ResolveProxyHelper::StartPendingRequest() {
       receiver_.BindNewPipeAndPassRemote();
   receiver_.set_disconnect_handler(
       base::BindOnce(&ResolveProxyHelper::OnProxyLookupComplete,
-                     base::Unretained(this), net::ERR_ABORTED, base::nullopt));
-  content::BrowserContext::GetDefaultStoragePartition(browser_context_)
-      ->GetNetworkContext()
-      ->LookUpProxyForURL(pending_requests_.front().url,
-                          net::NetworkIsolationKey::Todo(),
-                          std::move(proxy_lookup_client));
+                     base::Unretained(this), net::ERR_ABORTED, std::nullopt));
+  network::mojom::NetworkContext* network_context = nullptr;
+  if (browser_context_) {
+    network_context =
+        browser_context_->GetDefaultStoragePartition()->GetNetworkContext();
+  } else {
+    DCHECK(SystemNetworkContextManager::GetInstance());
+    network_context = SystemNetworkContextManager::GetInstance()->GetContext();
+  }
+  CHECK(network_context);
+  network_context->LookUpProxyForURL(pending_requests_.front().url,
+                                     net::NetworkAnonymizationKey(),
+                                     std::move(proxy_lookup_client));
 }
 
 void ResolveProxyHelper::OnProxyLookupComplete(
     int32_t net_error,
-    const base::Optional<net::ProxyInfo>& proxy_info) {
+    const std::optional<net::ProxyInfo>& proxy_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!pending_requests_.empty());
 
@@ -90,12 +99,12 @@ ResolveProxyHelper::PendingRequest::PendingRequest(
     : url(url), callback(std::move(callback)) {}
 
 ResolveProxyHelper::PendingRequest::PendingRequest(
-    ResolveProxyHelper::PendingRequest&& pending_request) = default;
+    ResolveProxyHelper::PendingRequest&& pending_request) noexcept = default;
 
 ResolveProxyHelper::PendingRequest::~PendingRequest() noexcept = default;
 
-ResolveProxyHelper::PendingRequest& ResolveProxyHelper::PendingRequest::
-operator=(ResolveProxyHelper::PendingRequest&& pending_request) noexcept =
-    default;
+ResolveProxyHelper::PendingRequest&
+ResolveProxyHelper::PendingRequest::operator=(
+    ResolveProxyHelper::PendingRequest&& pending_request) noexcept = default;
 
 }  // namespace electron

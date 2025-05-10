@@ -5,7 +5,7 @@
 #include "shell/common/gin_converters/file_dialog_converter.h"
 
 #include "gin/dictionary.h"
-#include "shell/browser/api/atom_api_browser_window.h"
+#include "shell/browser/api/electron_api_browser_window.h"
 #include "shell/common/gin_converters/file_path_converter.h"
 #include "shell/common/gin_converters/native_window_converter.h"
 
@@ -27,7 +27,7 @@ bool Converter<file_dialog::Filter>::FromV8(v8::Isolate* isolate,
 v8::Local<v8::Value> Converter<file_dialog::Filter>::ToV8(
     v8::Isolate* isolate,
     const file_dialog::Filter& in) {
-  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto dict = gin::Dictionary::CreateEmpty(isolate);
 
   dict.Set("name", in.first);
   dict.Set("extensions", in.second);
@@ -58,7 +58,7 @@ bool Converter<file_dialog::DialogSettings>::FromV8(
 v8::Local<v8::Value> Converter<file_dialog::DialogSettings>::ToV8(
     v8::Isolate* isolate,
     const file_dialog::DialogSettings& in) {
-  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto dict = gin::Dictionary::CreateEmpty(isolate);
 
   dict.Set("window",
            electron::api::BrowserWindow::From(isolate, in.parent_window));

@@ -9,22 +9,30 @@
 #include <utility>
 
 #include "base/files/file_util.h"
-#include "base/message_loop/message_loop.h"
-#include "base/no_destructor.h"
 #include "base/path_service.h"
-#include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/threading/thread_task_runner_handle.h"
-#include "shell/browser/atom_browser_main_parts.h"
-#include "shell/browser/atom_paths.h"
+#include "chrome/common/chrome_paths.h"
 #include "shell/browser/browser_observer.h"
-#include "shell/browser/login_handler.h"
+#include "shell/browser/electron_browser_main_parts.h"
 #include "shell/browser/native_window.h"
 #include "shell/browser/window_list.h"
 #include "shell/common/application_info.h"
+#include "shell/common/gin_converters/login_item_settings_converter.h"
 #include "shell/common/gin_helper/arguments.h"
+#include "shell/common/thread_restrictions.h"
 
 namespace electron {
+
+LoginItemSettings::LoginItemSettings() = default;
+LoginItemSettings::~LoginItemSettings() = default;
+LoginItemSettings::LoginItemSettings(const LoginItemSettings& other) = default;
+
+#if BUILDFLAG(IS_WIN)
+LaunchItem::LaunchItem() = default;
+LaunchItem::~LaunchItem() = default;
+LaunchItem::LaunchItem(const LaunchItem& other) = default;
+#endif
 
 namespace {
 
@@ -36,15 +44,11 @@ namespace {
 void RunQuitClosure(base::OnceClosure quit) {
   // On Linux/Windows the "ready" event is emitted in "PreMainMessageLoopRun",
   // make sure we quit after message loop has run for once.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, std::move(quit));
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                              std::move(quit));
 }
 
 }  // namespace
-
-Browser::LoginItemSettings::LoginItemSettings() = default;
-Browser::LoginItemSettings::~LoginItemSettings() = default;
-Browser::LoginItemSettings::LoginItemSettings(const LoginItemSettings& other) =
-    default;
 
 Browser::Browser() {
   WindowList::AddObserver(this);
@@ -54,17 +58,37 @@ Browser::~Browser() {
   WindowList::RemoveObserver(this);
 }
 
-// static
-Browser* Browser::Get() {
-  return AtomBrowserMainParts::Get()->browser();
+void Browser::AddObserver(BrowserObserver* obs) {
+  observers_.AddObserver(obs);
 }
 
+void Browser::RemoveObserver(BrowserObserver* obs) {
+  observers_.RemoveObserver(obs);
+}
+
+// static
+Browser* Browser::Get() {
+  return ElectronBrowserMainParts::Get()->browser();
+}
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
+void Browser::Focus(gin::Arguments* args) {
+  // Focus on the first visible window.
+  for (auto* const window : WindowList::GetWindows()) {
+    if (window->IsVisible()) {
+      window->Focus(true);
+      break;
+    }
+  }
+}
+#endif
+
 void Browser::Quit() {
-  if (is_quiting_)
+  if (is_quitting_)
     return;
 
-  is_quiting_ = HandleBeforeQuit();
-  if (!is_quiting_)
+  is_quitting_ = HandleBeforeQuit();
+  if (!is_quitting_)
     return;
 
   if (electron::WindowList::IsEmpty())
@@ -73,16 +97,16 @@ void Browser::Quit() {
     electron::WindowList::CloseAllWindows();
 }
 
-void Browser::Exit(gin_helper::Arguments* args) {
+void Browser::Exit(gin::Arguments* args) {
   int code = 0;
   args->GetNext(&code);
 
-  if (!AtomBrowserMainParts::Get()->SetExitCode(code)) {
+  if (!ElectronBrowserMainParts::Get()->SetExitCode(code)) {
     // Message loop is not ready, quit directly.
     exit(code);
   } else {
     // Prepare to quit when all windows have been closed.
-    is_quiting_ = true;
+    is_quitting_ = true;
 
     // Remember this caller so that we don't emit unrelated events.
     is_exiting_ = true;
@@ -103,10 +127,9 @@ void Browser::Shutdown() {
     return;
 
   is_shutdown_ = true;
-  is_quiting_ = true;
+  is_quitting_ = true;
 
-  for (BrowserObserver& observer : observers_)
-    observer.OnQuit();
+  observers_.Notify(&BrowserObserver::OnQuit);
 
   if (quit_main_message_loop_) {
     RunQuitClosure(std::move(quit_main_message_loop_));
@@ -118,67 +141,63 @@ void Browser::Shutdown() {
 }
 
 std::string Browser::GetVersion() const {
-  std::string ret = GetOverriddenApplicationVersion();
+  std::string ret = OverriddenApplicationVersion();
   if (ret.empty())
     ret = GetExecutableFileVersion();
   return ret;
 }
 
 void Browser::SetVersion(const std::string& version) {
-  OverrideApplicationVersion(version);
+  OverriddenApplicationVersion() = version;
 }
 
 std::string Browser::GetName() const {
-  std::string ret = GetOverriddenApplicationName();
+  std::string ret = OverriddenApplicationName();
   if (ret.empty())
     ret = GetExecutableFileProductName();
   return ret;
 }
 
 void Browser::SetName(const std::string& name) {
-  OverrideApplicationName(name);
-}
-
-int Browser::GetBadgeCount() {
-  return badge_count_;
+  OverriddenApplicationName() = name;
 }
 
 bool Browser::OpenFile(const std::string& file_path) {
   bool prevent_default = false;
-  for (BrowserObserver& observer : observers_)
-    observer.OnOpenFile(&prevent_default, file_path);
-
+  observers_.Notify(&BrowserObserver::OnOpenFile, &prevent_default, file_path);
   return prevent_default;
 }
 
 void Browser::OpenURL(const std::string& url) {
-  for (BrowserObserver& observer : observers_)
-    observer.OnOpenURL(url);
+  observers_.Notify(&BrowserObserver::OnOpenURL, url);
 }
 
 void Browser::Activate(bool has_visible_windows) {
-  for (BrowserObserver& observer : observers_)
-    observer.OnActivate(has_visible_windows);
+  observers_.Notify(&BrowserObserver::OnActivate, has_visible_windows);
 }
 
 void Browser::WillFinishLaunching() {
-  for (BrowserObserver& observer : observers_)
-    observer.OnWillFinishLaunching();
+  observers_.Notify(&BrowserObserver::OnWillFinishLaunching);
 }
 
-void Browser::DidFinishLaunching(base::DictionaryValue launch_info) {
+void Browser::DidFinishLaunching(base::Value::Dict launch_info) {
   // Make sure the userData directory is created.
-  base::ThreadRestrictions::ScopedAllowIO allow_io;
+  ScopedAllowBlockingForElectron allow_blocking;
   base::FilePath user_data;
-  if (base::PathService::Get(DIR_USER_DATA, &user_data))
+  if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data)) {
     base::CreateDirectoryAndGetError(user_data, nullptr);
+#if BUILDFLAG(IS_WIN)
+    base::SetExtraNoExecuteAllowedPath(chrome::DIR_USER_DATA);
+#endif
+  }
 
   is_ready_ = true;
   if (ready_promise_) {
     ready_promise_->Resolve();
   }
+
   for (BrowserObserver& observer : observers_)
-    observer.OnFinishLaunching(launch_info);
+    observer.OnFinishLaunching(launch_info.Clone());
 }
 
 v8::Local<v8::Value> Browser::WhenReady(v8::Isolate* isolate) {
@@ -192,14 +211,15 @@ v8::Local<v8::Value> Browser::WhenReady(v8::Isolate* isolate) {
 }
 
 void Browser::OnAccessibilitySupportChanged() {
-  for (BrowserObserver& observer : observers_)
-    observer.OnAccessibilitySupportChanged();
+  observers_.Notify(&BrowserObserver::OnAccessibilitySupportChanged);
 }
 
 void Browser::PreMainMessageLoopRun() {
-  for (BrowserObserver& observer : observers_) {
-    observer.OnPreMainMessageLoopRun();
-  }
+  observers_.Notify(&BrowserObserver::OnPreMainMessageLoopRun);
+}
+
+void Browser::PreCreateThreads() {
+  observers_.Notify(&BrowserObserver::OnPreCreateThreads);
 }
 
 void Browser::SetMainMessageLoopQuitClosure(base::OnceClosure quit_closure) {
@@ -214,11 +234,9 @@ void Browser::NotifyAndShutdown() {
     return;
 
   bool prevent_default = false;
-  for (BrowserObserver& observer : observers_)
-    observer.OnWillQuit(&prevent_default);
-
+  observers_.Notify(&BrowserObserver::OnWillQuit, &prevent_default);
   if (prevent_default) {
-    is_quiting_ = false;
+    is_quitting_ = false;
     return;
   }
 
@@ -227,34 +245,38 @@ void Browser::NotifyAndShutdown() {
 
 bool Browser::HandleBeforeQuit() {
   bool prevent_default = false;
-  for (BrowserObserver& observer : observers_)
-    observer.OnBeforeQuit(&prevent_default);
-
+  observers_.Notify(&BrowserObserver::OnBeforeQuit, &prevent_default);
   return !prevent_default;
 }
 
 void Browser::OnWindowCloseCancelled(NativeWindow* window) {
-  if (is_quiting_)
+  if (is_quitting_)
     // Once a beforeunload handler has prevented the closing, we think the quit
     // is cancelled too.
-    is_quiting_ = false;
+    is_quitting_ = false;
 }
 
 void Browser::OnWindowAllClosed() {
   if (is_exiting_) {
     Shutdown();
-  } else if (is_quiting_) {
+  } else if (is_quitting_) {
     NotifyAndShutdown();
   } else {
-    for (BrowserObserver& observer : observers_)
-      observer.OnWindowAllClosed();
+    observers_.Notify(&BrowserObserver::OnWindowAllClosed);
   }
 }
 
-#if defined(OS_MACOSX)
+#if BUILDFLAG(IS_MAC)
 void Browser::NewWindowForTab() {
-  for (BrowserObserver& observer : observers_)
-    observer.OnNewWindowForTab();
+  observers_.Notify(&BrowserObserver::OnNewWindowForTab);
+}
+
+void Browser::DidBecomeActive() {
+  observers_.Notify(&BrowserObserver::OnDidBecomeActive);
+}
+
+void Browser::DidResignActive() {
+  observers_.Notify(&BrowserObserver::OnDidResignActive);
 }
 #endif
 

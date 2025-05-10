@@ -1,10 +1,12 @@
+# TouchBar
+
 ## Class: TouchBar
 
 > Create TouchBar layouts for native macOS applications
 
-Process: [Main](../tutorial/application-architecture.md#main-and-renderer-processes)
+Process: [Main](../glossary.md#main-process)
 
-### `new TouchBar(options)` _Experimental_
+### `new TouchBar(options)`
 
 * `options` Object
   * `items` ([TouchBarButton](touch-bar-button.md) | [TouchBarColorPicker](touch-bar-color-picker.md) | [TouchBarGroup](touch-bar-group.md) | [TouchBarLabel](touch-bar-label.md) | [TouchBarPopover](touch-bar-popover.md) | [TouchBarScrubber](touch-bar-scrubber.md) | [TouchBarSegmentedControl](touch-bar-segmented-control.md) | [TouchBarSlider](touch-bar-slider.md) | [TouchBarSpacer](touch-bar-spacer.md))[] (optional)
@@ -13,12 +15,14 @@ Process: [Main](../tutorial/application-architecture.md#main-and-renderer-proces
 Creates a new touch bar with the specified items. Use
 `BrowserWindow.setTouchBar` to add the `TouchBar` to a window.
 
-**Note:** The TouchBar API is currently experimental and may change or be
-removed in future Electron releases.
+> [!NOTE]
+> The TouchBar API is currently experimental and may change or be
+> removed in future Electron releases.
 
-**Tip:** If you don't have a MacBook with Touch Bar, you can use
-[Touch Bar Simulator](https://github.com/sindresorhus/touch-bar-simulator)
-to test Touch Bar usage in your app.
+> [!TIP]
+> If you don't have a MacBook with Touch Bar, you can use
+> [Touch Bar Simulator](https://github.com/sindresorhus/touch-bar-simulator)
+> to test Touch Bar usage in your app.
 
 ### Static Properties
 
@@ -58,6 +62,10 @@ A [`typeof TouchBarSlider`](./touch-bar-slider.md) reference to the `TouchBarSli
 
 A [`typeof TouchBarSpacer`](./touch-bar-spacer.md) reference to the `TouchBarSpacer` class.
 
+#### `TouchBarOtherItemsProxy`
+
+A [`typeof TouchBarOtherItemsProxy`](./touch-bar-other-items-proxy.md) reference to the `TouchBarOtherItemsProxy` class.
+
 ### Instance Properties
 
 The following properties are available on instances of `TouchBar`:
@@ -73,7 +81,7 @@ immediately updates the escape item in the touch bar.
 Below is an example of a simple slot machine touch bar game with a button
 and some labels.
 
-```javascript
+```js
 const { app, BrowserWindow, TouchBar } = require('electron')
 
 const { TouchBarLabel, TouchBarButton, TouchBarSpacer } = TouchBar
@@ -81,12 +89,12 @@ const { TouchBarLabel, TouchBarButton, TouchBarSpacer } = TouchBar
 let spinning = false
 
 // Reel labels
-const reel1 = new TouchBarLabel()
-const reel2 = new TouchBarLabel()
-const reel3 = new TouchBarLabel()
+const reel1 = new TouchBarLabel({ label: '' })
+const reel2 = new TouchBarLabel({ label: '' })
+const reel3 = new TouchBarLabel({ label: '' })
 
 // Spin result label
-const result = new TouchBarLabel()
+const result = new TouchBarLabel({ label: '' })
 
 // Spin button
 const spin = new TouchBarButton({
@@ -166,7 +174,7 @@ const touchBar = new TouchBar({
 
 let window
 
-app.once('ready', () => {
+app.whenReady().then(() => {
   window = new BrowserWindow({
     frame: false,
     titleBarStyle: 'hiddenInset',

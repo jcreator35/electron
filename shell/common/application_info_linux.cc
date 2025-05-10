@@ -7,12 +7,9 @@
 #include <gio/gdesktopappinfo.h>
 #include <gio/gio.h>
 
-#include <memory>
 #include <string>
 
-#include "base/environment.h"
 #include "base/logging.h"
-#include "chrome/browser/ui/libgtkui/gtk_util.h"
 #include "electron/electron_version.h"
 #include "shell/common/platform_util.h"
 
@@ -21,9 +18,8 @@ namespace {
 GDesktopAppInfo* get_desktop_app_info() {
   GDesktopAppInfo* ret = nullptr;
 
-  std::string desktop_id;
-  if (platform_util::GetDesktopName(&desktop_id))
-    ret = g_desktop_app_info_new(desktop_id.c_str());
+  if (std::optional<std::string> desktop_id = platform_util::GetDesktopName())
+    ret = g_desktop_app_info_new(desktop_id->c_str());
 
   return ret;
 }
@@ -34,7 +30,7 @@ namespace electron {
 
 std::string GetApplicationName() {
   // attempt #1: the string set in app.setName()
-  std::string ret = GetOverriddenApplicationName();
+  std::string ret = OverriddenApplicationName();
 
   // attempt #2: the 'Name' entry from .desktop file's [Desktop] section
   if (ret.empty()) {
@@ -65,7 +61,7 @@ std::string GetApplicationVersion() {
 
   // try to use the string set in app.setVersion()
   if (ret.empty())
-    ret = GetOverriddenApplicationVersion();
+    ret = OverriddenApplicationVersion();
 
   // no known version number; return some safe fallback
   if (ret.empty()) {

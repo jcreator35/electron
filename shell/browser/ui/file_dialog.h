@@ -2,20 +2,25 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_UI_FILE_DIALOG_H_
-#define SHELL_BROWSER_UI_FILE_DIALOG_H_
+#ifndef ELECTRON_SHELL_BROWSER_UI_FILE_DIALOG_H_
+#define ELECTRON_SHELL_BROWSER_UI_FILE_DIALOG_H_
 
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "shell/common/gin_helper/dictionary.h"
-#include "shell/common/gin_helper/promise.h"
+#include "base/memory/raw_ptr_exclusion.h"
 
 namespace electron {
 class NativeWindow;
 }
+
+namespace gin_helper {
+class Dictionary;
+template <typename T>
+class Promise;
+}  // namespace gin_helper
 
 namespace file_dialog {
 
@@ -44,7 +49,7 @@ enum SaveFileDialogProperty {
 };
 
 struct DialogSettings {
-  electron::NativeWindow* parent_window = nullptr;
+  RAW_PTR_EXCLUSION electron::NativeWindow* parent_window = nullptr;
   std::string title;
   std::string message;
   std::string button_label;
@@ -72,6 +77,16 @@ bool ShowSaveDialogSync(const DialogSettings& settings, base::FilePath* path);
 void ShowSaveDialog(const DialogSettings& settings,
                     gin_helper::Promise<gin_helper::Dictionary> promise);
 
+#if BUILDFLAG(IS_LINUX)
+// Rewrite of SelectFileDialogLinuxPortal equivalent functions with primary
+// difference being that dbus_thread_linux::GetSharedSessionBus is not used
+// so that version detection can be initiated and compeleted on the dbus thread
+// Refs https://github.com/electron/electron/issues/46652
+void StartPortalAvailabilityTestInBackground();
+bool IsPortalAvailable();
+uint32_t GetPortalVersion();
+#endif
+
 }  // namespace file_dialog
 
-#endif  // SHELL_BROWSER_UI_FILE_DIALOG_H_
+#endif  // ELECTRON_SHELL_BROWSER_UI_FILE_DIALOG_H_

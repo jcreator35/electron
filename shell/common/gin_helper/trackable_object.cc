@@ -6,38 +6,33 @@
 
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/supports_user_data.h"
-#include "shell/browser/atom_browser_main_parts.h"
-#include "shell/common/gin_helper/locker.h"
+#include "shell/browser/electron_browser_main_parts.h"
+#include "shell/common/process_util.h"
 
 namespace gin_helper {
 
 namespace {
 
-const char* kTrackedObjectKey = "TrackedObjectKey";
+const char kTrackedObjectKey[] = "TrackedObjectKey";
 
 class IDUserData : public base::SupportsUserData::Data {
  public:
   explicit IDUserData(int32_t id) : id_(id) {}
 
-  operator int32_t() const { return id_; }
+  explicit operator int32_t() const { return id_; }
 
  private:
   int32_t id_;
-
-  DISALLOW_COPY_AND_ASSIGN(IDUserData);
 };
 
 }  // namespace
 
-TrackableObjectBase::TrackableObjectBase() : weak_factory_(this) {
+TrackableObjectBase::TrackableObjectBase() {
   // TODO(zcbenz): Make TrackedObject work in renderer process.
-  DCHECK(gin_helper::Locker::IsBrowserProcess())
+  DCHECK(electron::IsBrowserProcess())
       << "This class only works for browser process";
-
-  electron::AtomBrowserMainParts::Get()->RegisterDestructionCallback(
-      GetDestroyClosure());
 }
 
 TrackableObjectBase::~TrackableObjectBase() = default;
@@ -63,7 +58,7 @@ int32_t TrackableObjectBase::GetIDFromWrappedClass(
     auto* id =
         static_cast<IDUserData*>(wrapped->GetUserData(kTrackedObjectKey));
     if (id)
-      return *id;
+      return int32_t(*id);
   }
   return 0;
 }

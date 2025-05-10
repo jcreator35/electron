@@ -9,32 +9,42 @@ module is emitted.
 
 `screen` is an [EventEmitter][event-emitter].
 
-**Note:** In the renderer / DevTools, `window.screen` is a reserved DOM
-property, so writing `let { screen } = require('electron')` will not work.
+> [!NOTE]
+> In the renderer / DevTools, `window.screen` is a reserved DOM
+> property, so writing `let { screen } = require('electron')` will not work.
 
 An example of creating a window that fills the whole screen:
 
-```javascript fiddle='docs/fiddles/screen/fit-screen'
-const { app, BrowserWindow, screen } = require('electron')
+```fiddle docs/fiddles/screen/fit-screen
+// Retrieve information about screen size, displays, cursor position, etc.
+//
+// For more info, see:
+// https://www.electronjs.org/docs/latest/api/screen
 
-let win
-app.on('ready', () => {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize
-  win = new BrowserWindow({ width, height })
-  win.loadURL('https://github.com')
+const { app, BrowserWindow, screen } = require('electron/main')
+
+let mainWindow = null
+
+app.whenReady().then(() => {
+  // Create a window that fills the screen's available work area.
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width, height } = primaryDisplay.workAreaSize
+
+  mainWindow = new BrowserWindow({ width, height })
+  mainWindow.loadURL('https://electronjs.org')
 })
 ```
 
 Another example of creating a window in the external display:
 
-```javascript
+```js
 const { app, BrowserWindow, screen } = require('electron')
 
 let win
 
-app.on('ready', () => {
-  let displays = screen.getAllDisplays()
-  let externalDisplay = displays.find((display) => {
+app.whenReady().then(() => {
+  const displays = screen.getAllDisplays()
+  const externalDisplay = displays.find((display) => {
     return display.bounds.x !== 0 || display.bounds.y !== 0
   })
 
@@ -76,7 +86,7 @@ Returns:
 
 * `event` Event
 * `display` [Display](structures/display.md)
-* `changedMetrics` String[]
+* `changedMetrics` string[]
 
 Emitted when one or more metrics change in a `display`. The `changedMetrics` is
 an array of strings that describe the changes. Possible changes are `bounds`,
@@ -91,6 +101,9 @@ The `screen` module has the following methods:
 Returns [`Point`](structures/point.md)
 
 The current absolute position of the mouse pointer.
+
+> [!NOTE]
+> The return value is a DIP point, not a screen physical point.
 
 ### `screen.getPrimaryDisplay()`
 
@@ -113,7 +126,7 @@ Returns [`Display`](structures/display.md) - The display nearest the specified p
 Returns [`Display`](structures/display.md) - The display that most closely
 intersects the provided bounds.
 
-### `screen.screenToDipPoint(point)` _Windows_
+### `screen.screenToDipPoint(point)` _Windows_ _Linux_
 
 * `point` [Point](structures/point.md)
 
@@ -122,7 +135,10 @@ Returns [`Point`](structures/point.md)
 Converts a screen physical point to a screen DIP point.
 The DPI scale is performed relative to the display containing the physical point.
 
-### `screen.dipToScreenPoint(point)` _Windows_
+Not currently supported on Wayland - if used there it will return the point passed
+in with no changes.
+
+### `screen.dipToScreenPoint(point)` _Windows_ _Linux_
 
 * `point` [Point](structures/point.md)
 
@@ -130,6 +146,8 @@ Returns [`Point`](structures/point.md)
 
 Converts a screen DIP point to a screen physical point.
 The DPI scale is performed relative to the display containing the DIP point.
+
+Not currently supported on Wayland.
 
 ### `screen.screenToDipRect(window, rect)` _Windows_
 

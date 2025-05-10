@@ -6,27 +6,21 @@
 
 #include <memory>
 
-#include "content/public/browser/native_web_keyboard_event.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "shell/browser/native_window.h"
 #include "shell/browser/ui/views/menu_bar.h"
+#include "ui/views/layout/box_layout.h"
 
 namespace electron {
 
 namespace {
 
-// The menu bar height in pixels.
-#if defined(OS_WIN)
-const int kMenuBarHeight = 20;
-#else
-const int kMenuBarHeight = 25;
-#endif
-
-bool IsAltKey(const content::NativeWebKeyboardEvent& event) {
+bool IsAltKey(const input::NativeWebKeyboardEvent& event) {
   return event.windows_key_code == ui::VKEY_MENU;
 }
 
-bool IsAltModifier(const content::NativeWebKeyboardEvent& event) {
-  typedef content::NativeWebKeyboardEvent::Modifiers Modifiers;
+bool IsAltModifier(const input::NativeWebKeyboardEvent& event) {
+  using Modifiers = input::NativeWebKeyboardEvent::Modifiers;
   int modifiers = event.GetModifiers();
   modifiers &= ~Modifiers::kNumLockOn;
   modifiers &= ~Modifiers::kCapsLockOn;
@@ -38,14 +32,20 @@ bool IsAltModifier(const content::NativeWebKeyboardEvent& event) {
 }  // namespace
 
 RootView::RootView(NativeWindow* window)
-    : window_(window),
-      last_focused_view_tracker_(std::make_unique<views::ViewTracker>()) {
-  set_owned_by_client();
+    : window_{raw_ref<NativeWindow>::from_ptr(window)},
+      main_view_{raw_ref<views::View>::from_ptr(
+          AddChildView(std::make_unique<views::View>()))} {
+  set_owned_by_client(OwnedByClientPassKey{});
+  views::BoxLayout* layout =
+      SetLayoutManager(std::make_unique<views::BoxLayout>(
+          views::BoxLayout::Orientation::kVertical));
+  main_view_->SetUseDefaultFillLayout(true);
+  layout->SetFlexForView(&main_view_.get(), 1);
 }
 
 RootView::~RootView() = default;
 
-void RootView::SetMenu(AtomMenuModel* menu_model) {
+void RootView::SetMenu(ElectronMenuModel* menu_model) {
   if (menu_model == nullptr) {
     // Remove accelerators
     UnregisterAcceleratorsWithFocusManager();
@@ -62,14 +62,14 @@ void RootView::SetMenu(AtomMenuModel* menu_model) {
     return;
 
   if (!menu_bar_) {
-    menu_bar_ = std::make_unique<MenuBar>(this);
-    menu_bar_->set_owned_by_client();
+    menu_bar_ = std::make_unique<MenuBar>(&window_.get(), this);
+    menu_bar_->set_owned_by_client(OwnedByClientPassKey{});
     if (!menu_bar_autohide_)
       SetMenuBarVisibility(true);
   }
 
   menu_bar_->SetMenu(menu_model);
-  Layout();
+  InvalidateLayout();
 }
 
 bool RootView::HasMenu() const {
@@ -77,15 +77,11 @@ bool RootView::HasMenu() const {
 }
 
 int RootView::GetMenuBarHeight() const {
-  return kMenuBarHeight;
+  return menu_bar_ ? menu_bar_->GetPreferredSize().height() : 0;
 }
 
 void RootView::SetAutoHideMenuBar(bool auto_hide) {
   menu_bar_autohide_ = auto_hide;
-}
-
-bool RootView::IsMenuBarAutoHide() const {
-  return menu_bar_autohide_;
 }
 
 void RootView::SetMenuBarVisibility(bool visible) {
@@ -94,51 +90,46 @@ void RootView::SetMenuBarVisibility(bool visible) {
 
   menu_bar_visible_ = visible;
   if (visible) {
-    DCHECK_EQ(children().size(), 1ul);
-    AddChildView(menu_bar_.get());
+    AddChildViewAt(menu_bar_.get(), 0);
   } else {
-    DCHECK_EQ(children().size(), 2ul);
     RemoveChildView(menu_bar_.get());
   }
 
-  Layout();
+  InvalidateLayout();
 }
 
-bool RootView::IsMenuBarVisible() const {
-  return menu_bar_visible_;
-}
-
-void RootView::HandleKeyEvent(const content::NativeWebKeyboardEvent& event) {
+void RootView::HandleKeyEvent(const input::NativeWebKeyboardEvent& event) {
   if (!menu_bar_)
     return;
 
   // Show accelerator when "Alt" is pressed.
   if (menu_bar_visible_ && IsAltKey(event))
-    menu_bar_->SetAcceleratorVisibility(event.GetType() ==
-                                        blink::WebInputEvent::kRawKeyDown);
+    menu_bar_->SetAcceleratorVisibility(
+        event.GetType() == blink::WebInputEvent::Type::kRawKeyDown);
 
   // Show the submenu when "Alt+Key" is pressed.
-  if (event.GetType() == blink::WebInputEvent::kRawKeyDown &&
-      !IsAltKey(event) && IsAltModifier(event)) {
-    if (menu_bar_->HasAccelerator(event.windows_key_code)) {
-      if (!menu_bar_visible_) {
-        SetMenuBarVisibility(true);
+  if (event.GetType() == blink::WebInputEvent::Type::kRawKeyDown &&
+      event.windows_key_code >= ui::VKEY_A &&
+      event.windows_key_code <= ui::VKEY_Z && IsAltModifier(event) &&
+      menu_bar_->HasAccelerator(event.windows_key_code)) {
+    if (!menu_bar_visible_) {
+      SetMenuBarVisibility(true);
 
-        View* focused_view = GetFocusManager()->GetFocusedView();
-        last_focused_view_tracker_->SetView(focused_view);
-        menu_bar_->RequestFocus();
-      }
-
-      menu_bar_->ActivateAccelerator(event.windows_key_code);
+      View* focused_view = GetFocusManager()->GetFocusedView();
+      last_focused_view_tracker_.SetView(focused_view);
+      menu_bar_->RequestFocus();
     }
+
+    menu_bar_->ActivateAccelerator(event.windows_key_code);
     return;
   }
 
   // Toggle the menu bar only when a single Alt is released.
-  if (event.GetType() == blink::WebInputEvent::kRawKeyDown && IsAltKey(event)) {
+  if (event.GetType() == blink::WebInputEvent::Type::kRawKeyDown &&
+      IsAltKey(event)) {
     // When a single Alt is pressed:
     menu_bar_alt_pressed_ = true;
-  } else if (event.GetType() == blink::WebInputEvent::kKeyUp &&
+  } else if (event.GetType() == blink::WebInputEvent::Type::kKeyUp &&
              IsAltKey(event) && menu_bar_alt_pressed_) {
     // When a single Alt is released right after a Alt is pressed:
     menu_bar_alt_pressed_ = false;
@@ -146,7 +137,7 @@ void RootView::HandleKeyEvent(const content::NativeWebKeyboardEvent& event) {
       SetMenuBarVisibility(!menu_bar_visible_);
 
     View* focused_view = GetFocusManager()->GetFocusedView();
-    last_focused_view_tracker_->SetView(focused_view);
+    last_focused_view_tracker_.SetView(focused_view);
     if (menu_bar_visible_) {
       menu_bar_->RequestFocus();
       // Show accelerators when menu bar is focused
@@ -159,7 +150,7 @@ void RootView::HandleKeyEvent(const content::NativeWebKeyboardEvent& event) {
 }
 
 void RootView::RestoreFocus() {
-  View* last_focused_view = last_focused_view_tracker_->view();
+  View* last_focused_view = last_focused_view_tracker_.view();
   if (last_focused_view) {
     GetFocusManager()->SetFocusedViewWithReason(
         last_focused_view,
@@ -171,21 +162,6 @@ void RootView::RestoreFocus() {
 
 void RootView::ResetAltState() {
   menu_bar_alt_pressed_ = false;
-}
-
-void RootView::Layout() {
-  if (!window_->content_view())  // Not ready yet.
-    return;
-
-  const auto menu_bar_bounds =
-      menu_bar_visible_ ? gfx::Rect(0, 0, size().width(), kMenuBarHeight)
-                        : gfx::Rect();
-  if (menu_bar_)
-    menu_bar_->SetBoundsRect(menu_bar_bounds);
-
-  window_->content_view()->SetBoundsRect(
-      gfx::Rect(0, menu_bar_visible_ ? menu_bar_bounds.bottom() : 0,
-                size().width(), size().height() - menu_bar_bounds.height()));
 }
 
 gfx::Size RootView::GetMinimumSize() const {
@@ -201,7 +177,8 @@ bool RootView::AcceleratorPressed(const ui::Accelerator& accelerator) {
                                                           accelerator);
 }
 
-void RootView::RegisterAcceleratorsWithFocusManager(AtomMenuModel* menu_model) {
+void RootView::RegisterAcceleratorsWithFocusManager(
+    ElectronMenuModel* menu_model) {
   if (!menu_model)
     return;
   // Clear previous accelerators.

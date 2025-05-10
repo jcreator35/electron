@@ -5,21 +5,21 @@
 #include "shell/browser/api/process_metric.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
-#include "base/optional.h"
-
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
 
 #include <psapi.h>
 #include "base/win/win_util.h"
 #endif
 
-#if defined(OS_MACOSX)
+#if BUILDFLAG(IS_MAC)
 #include <mach/mach.h>
 #include "base/process/port_provider_mac.h"
 #include "content/public/browser/browser_child_process_host.h"
+#include "electron/mas.h"
 
 extern "C" int sandbox_check(pid_t pid, const char* operation, int type, ...);
 
@@ -28,35 +28,39 @@ namespace {
 mach_port_t TaskForPid(pid_t pid) {
   mach_port_t task = MACH_PORT_NULL;
   if (auto* port_provider = content::BrowserChildProcessHost::GetPortProvider())
-    task = port_provider->TaskForPid(pid);
+    task = port_provider->TaskForHandle(pid);
   if (task == MACH_PORT_NULL && pid == getpid())
     task = mach_task_self();
   return task;
 }
 
-base::Optional<mach_task_basic_info_data_t> GetTaskInfo(mach_port_t task) {
+std::optional<mach_task_basic_info_data_t> GetTaskInfo(mach_port_t task) {
   if (task == MACH_PORT_NULL)
-    return base::nullopt;
+    return std::nullopt;
   mach_task_basic_info_data_t info = {};
   mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
   kern_return_t kr = task_info(task, MACH_TASK_BASIC_INFO,
                                reinterpret_cast<task_info_t>(&info), &count);
-  return (kr == KERN_SUCCESS) ? base::make_optional(info) : base::nullopt;
+  return (kr == KERN_SUCCESS) ? std::make_optional(info) : std::nullopt;
 }
 
 }  // namespace
 
-#endif  // defined(OS_MACOSX)
+#endif  // BUILDFLAG(IS_MAC)
 
 namespace electron {
 
 ProcessMetric::ProcessMetric(int type,
                              base::ProcessHandle handle,
-                             std::unique_ptr<base::ProcessMetrics> metrics) {
+                             std::unique_ptr<base::ProcessMetrics> metrics,
+                             const std::string& service_name,
+                             const std::string& name) {
   this->type = type;
   this->metrics = std::move(metrics);
+  this->service_name = service_name;
+  this->name = name;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   HANDLE duplicate_handle = INVALID_HANDLE_VALUE;
   ::DuplicateHandle(::GetCurrentProcess(), handle, ::GetCurrentProcess(),
                     &duplicate_handle, 0, false, DUPLICATE_SAME_ACCESS);
@@ -68,7 +72,7 @@ ProcessMetric::ProcessMetric(int type,
 
 ProcessMetric::~ProcessMetric() = default;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 
 ProcessMemoryInfo ProcessMetric::GetMemoryInfo() const {
   ProcessMemoryInfo result;
@@ -88,7 +92,7 @@ ProcessMemoryInfo ProcessMetric::GetMemoryInfo() const {
 ProcessIntegrityLevel ProcessMetric::GetIntegrityLevel() const {
   HANDLE token = nullptr;
   if (!::OpenProcessToken(process.Handle(), TOKEN_QUERY, &token)) {
-    return ProcessIntegrityLevel::Unknown;
+    return ProcessIntegrityLevel::kUnknown;
   }
 
   base::win::ScopedHandle token_scoped(token);
@@ -97,15 +101,15 @@ ProcessIntegrityLevel ProcessMetric::GetIntegrityLevel() const {
   if (::GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0,
                             &token_info_length) ||
       ::GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-    return ProcessIntegrityLevel::Unknown;
+    return ProcessIntegrityLevel::kUnknown;
   }
 
   auto token_label_bytes = std::make_unique<char[]>(token_info_length);
-  TOKEN_MANDATORY_LABEL* token_label =
+  auto* token_label =
       reinterpret_cast<TOKEN_MANDATORY_LABEL*>(token_label_bytes.get());
   if (!::GetTokenInformation(token, TokenIntegrityLevel, token_label,
                              token_info_length, &token_info_length)) {
-    return ProcessIntegrityLevel::Unknown;
+    return ProcessIntegrityLevel::kUnknown;
   }
 
   DWORD integrity_level = *::GetSidSubAuthority(
@@ -115,34 +119,34 @@ ProcessIntegrityLevel ProcessMetric::GetIntegrityLevel() const {
 
   if (integrity_level >= SECURITY_MANDATORY_UNTRUSTED_RID &&
       integrity_level < SECURITY_MANDATORY_LOW_RID) {
-    return ProcessIntegrityLevel::Untrusted;
+    return ProcessIntegrityLevel::kUntrusted;
   }
 
   if (integrity_level >= SECURITY_MANDATORY_LOW_RID &&
       integrity_level < SECURITY_MANDATORY_MEDIUM_RID) {
-    return ProcessIntegrityLevel::Low;
+    return ProcessIntegrityLevel::kLow;
   }
 
   if (integrity_level >= SECURITY_MANDATORY_MEDIUM_RID &&
       integrity_level < SECURITY_MANDATORY_HIGH_RID) {
-    return ProcessIntegrityLevel::Medium;
+    return ProcessIntegrityLevel::kMedium;
   }
 
   if (integrity_level >= SECURITY_MANDATORY_HIGH_RID &&
       integrity_level < SECURITY_MANDATORY_SYSTEM_RID) {
-    return ProcessIntegrityLevel::High;
+    return ProcessIntegrityLevel::kHigh;
   }
 
-  return ProcessIntegrityLevel::Unknown;
+  return ProcessIntegrityLevel::kUnknown;
 }
 
 // static
 bool ProcessMetric::IsSandboxed(ProcessIntegrityLevel integrity_level) {
-  return integrity_level > ProcessIntegrityLevel::Unknown &&
-         integrity_level < ProcessIntegrityLevel::Medium;
+  return integrity_level > ProcessIntegrityLevel::kUnknown &&
+         integrity_level < ProcessIntegrityLevel::kMedium;
 }
 
-#elif defined(OS_MACOSX)
+#elif BUILDFLAG(IS_MAC)
 
 ProcessMemoryInfo ProcessMetric::GetMemoryInfo() const {
   ProcessMemoryInfo result;
@@ -156,13 +160,13 @@ ProcessMemoryInfo ProcessMetric::GetMemoryInfo() const {
 }
 
 bool ProcessMetric::IsSandboxed() const {
-#if defined(MAS_BUILD)
+#if IS_MAS_BUILD()
   return true;
 #else
   return sandbox_check(process.Pid(), nullptr, 0) != 0;
 #endif
 }
 
-#endif  // defined(OS_MACOSX)
+#endif  // BUILDFLAG(IS_MAC)
 
 }  // namespace electron

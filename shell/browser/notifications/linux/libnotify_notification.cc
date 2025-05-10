@@ -4,15 +4,14 @@
 
 #include "shell/browser/notifications/linux/libnotify_notification.h"
 
-#include <set>
 #include <string>
-#include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/files/file_enumerator.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/strings/string_util.h"
+#include "base/process/process_handle.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/libgtkui/gtk_util.h"
 #include "shell/browser/notifications/notification_delegate.h"
 #include "shell/browser/ui/gtk_util.h"
 #include "shell/common/application_info.h"
@@ -25,8 +24,8 @@ namespace {
 
 LibNotifyLoader libnotify_loader_;
 
-const std::set<std::string>& GetServerCapabilities() {
-  static std::set<std::string> caps;
+const base::flat_set<std::string>& GetServerCapabilities() {
+  static base::flat_set<std::string> caps;
   if (caps.empty()) {
     auto* capabilities = libnotify_loader_.notify_get_server_caps();
     for (auto* l = capabilities; l != nullptr; l = l->next)
@@ -37,7 +36,7 @@ const std::set<std::string>& GetServerCapabilities() {
 }
 
 bool HasCapability(const std::string& capability) {
-  return GetServerCapabilities().count(capability) != 0;
+  return GetServerCapabilities().contains(capability);
 }
 
 bool NotifierSupportsActions() {
@@ -75,7 +74,7 @@ bool LibnotifyNotification::Initialize() {
 
 LibnotifyNotification::LibnotifyNotification(NotificationDelegate* delegate,
                                              NotificationPresenter* presenter)
-    : Notification(delegate, presenter), notification_(nullptr) {}
+    : Notification(delegate, presenter) {}
 
 LibnotifyNotification::~LibnotifyNotification() {
   if (notification_) {
@@ -89,21 +88,22 @@ void LibnotifyNotification::Show(const NotificationOptions& options) {
       base::UTF16ToUTF8(options.title).c_str(),
       base::UTF16ToUTF8(options.msg).c_str(), nullptr);
 
-  g_signal_connect(notification_, "closed",
-                   G_CALLBACK(OnNotificationClosedThunk), this);
+  signal_ = ScopedGSignal(
+      notification_, "closed",
+      base::BindRepeating(&LibnotifyNotification::OnNotificationClosed,
+                          base::Unretained(this)));
 
   // NB: On Unity and on any other DE using Notify-OSD, adding a notification
   // action will cause the notification to display as a modal dialog box.
   if (NotifierSupportsActions()) {
     libnotify_loader_.notify_notification_add_action(
-        notification_, "default", "View", OnNotificationViewThunk, this,
-        nullptr);
+        notification_, "default", "View", OnNotificationView, this, nullptr);
   }
 
   NotifyUrgency urgency = NOTIFY_URGENCY_NORMAL;
-  if (options.urgency == base::ASCIIToUTF16("critical")) {
+  if (options.urgency == u"critical") {
     urgency = NOTIFY_URGENCY_CRITICAL;
-  } else if (options.urgency == base::ASCIIToUTF16("low")) {
+  } else if (options.urgency == u"low") {
     urgency = NOTIFY_URGENCY_LOW;
   }
 
@@ -118,37 +118,37 @@ void LibnotifyNotification::Show(const NotificationOptions& options) {
   }
 
   // Set the timeout duration for the notification
-  bool neverTimeout = options.timeout_type == base::ASCIIToUTF16("never");
+  bool neverTimeout = options.timeout_type == u"never";
   int timeout = (neverTimeout) ? NOTIFY_EXPIRES_NEVER : NOTIFY_EXPIRES_DEFAULT;
   libnotify_loader_.notify_notification_set_timeout(notification_, timeout);
 
   if (!options.tag.empty()) {
     GQuark id = g_quark_from_string(options.tag.c_str());
-    g_object_set(G_OBJECT(notification_), "id", id, NULL);
+    g_object_set(G_OBJECT(notification_), "id", id, nullptr);
   }
 
   // Always try to append notifications.
   // Unique tags can be used to prevent this.
   if (HasCapability("append")) {
-    libnotify_loader_.notify_notification_set_hint_string(notification_,
-                                                          "append", "true");
+    libnotify_loader_.notify_notification_set_hint(
+        notification_, "append", g_variant_new_string("true"));
   } else if (HasCapability("x-canonical-append")) {
-    libnotify_loader_.notify_notification_set_hint_string(
-        notification_, "x-canonical-append", "true");
+    libnotify_loader_.notify_notification_set_hint(
+        notification_, "x-canonical-append", g_variant_new_string("true"));
   }
 
   // Send the desktop name to identify the application
   // The desktop-entry is the part before the .desktop
-  std::string desktop_id;
-  if (platform_util::GetDesktopName(&desktop_id)) {
-    const std::string suffix{".desktop"};
-    if (base::EndsWith(desktop_id, suffix,
-                       base::CompareCase::INSENSITIVE_ASCII)) {
-      desktop_id.resize(desktop_id.size() - suffix.size());
-    }
-    libnotify_loader_.notify_notification_set_hint_string(
-        notification_, "desktop-entry", desktop_id.c_str());
+  std::string desktop_id = platform_util::GetXdgAppId();
+  if (!desktop_id.empty()) {
+    libnotify_loader_.notify_notification_set_hint(
+        notification_, "desktop-entry",
+        g_variant_new_string(desktop_id.c_str()));
   }
+
+  libnotify_loader_.notify_notification_set_hint(
+      notification_, "sender-pid",
+      g_variant_new_int64(base::GetCurrentProcId()));
 
   GError* error = nullptr;
   libnotify_loader_.notify_notification_show(notification_, &error);
@@ -164,26 +164,29 @@ void LibnotifyNotification::Show(const NotificationOptions& options) {
 
 void LibnotifyNotification::Dismiss() {
   if (!notification_) {
-    Destroy();
     return;
   }
 
   GError* error = nullptr;
+  on_dismissing_ = true;
   libnotify_loader_.notify_notification_close(notification_, &error);
   if (error) {
     log_and_clear_error(error, "notify_notification_close");
-    Destroy();
   }
+  on_dismissing_ = false;
 }
 
 void LibnotifyNotification::OnNotificationClosed(
     NotifyNotification* notification) {
-  NotificationDismissed();
+  NotificationDismissed(!on_dismissing_);
 }
 
 void LibnotifyNotification::OnNotificationView(NotifyNotification* notification,
-                                               char* action) {
-  NotificationClicked();
+                                               char* action,
+                                               gpointer user_data) {
+  LibnotifyNotification* that = static_cast<LibnotifyNotification*>(user_data);
+  DCHECK(that);
+  that->NotificationClicked();
 }
 
 }  // namespace electron

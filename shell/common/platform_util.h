@@ -2,18 +2,15 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_COMMON_PLATFORM_UTIL_H_
-#define SHELL_COMMON_PLATFORM_UTIL_H_
+#ifndef ELECTRON_SHELL_COMMON_PLATFORM_UTIL_H_
+#define ELECTRON_SHELL_COMMON_PLATFORM_UTIL_H_
 
+#include <optional>
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback_forward.h"
 #include "build/build_config.h"
-
-#if defined(OS_WIN)
-#include "base/strings/string16.h"
-#endif
 
 class GURL;
 
@@ -32,6 +29,7 @@ void OpenPath(const base::FilePath& full_path, OpenCallback callback);
 struct OpenExternalOptions {
   bool activate = true;
   base::FilePath working_dir;
+  bool log_usage = false;
 };
 
 // Open the given external protocol URL in the desktop's default manner.
@@ -40,22 +38,35 @@ void OpenExternal(const GURL& url,
                   const OpenExternalOptions& options,
                   OpenCallback callback);
 
-// Move a file to trash.
-bool MoveItemToTrash(const base::FilePath& full_path, bool delete_on_fail);
+// Move a file to trash, asynchronously.
+void TrashItem(const base::FilePath& full_path,
+               base::OnceCallback<void(bool, const std::string&)> callback);
 
 void Beep();
 
-#if defined(OS_MACOSX)
-bool GetLoginItemEnabled();
-bool SetLoginItemEnabled(bool enabled);
+#if BUILDFLAG(IS_WIN)
+// SHGetFolderPath calls not covered by Chromium
+bool GetFolderPath(int key, base::FilePath* result);
 #endif
 
-#if defined(OS_LINUX)
-// Returns a success flag.
+#if BUILDFLAG(IS_MAC)
+std::string GetLoginItemEnabled(const std::string& type,
+                                const std::string& service_name);
+bool SetLoginItemEnabled(const std::string& type,
+                         const std::string& service_name,
+                         bool enabled);
+#endif
+
+#if BUILDFLAG(IS_LINUX)
+// Returns a desktop name if available.
 // Unlike libgtkui, does *not* use "chromium-browser.desktop" as a fallback.
-bool GetDesktopName(std::string* setme);
+std::optional<std::string> GetDesktopName();
+
+// The XDG application ID must match the name of the desktop entry file without
+// the .desktop extension.
+std::string GetXdgAppId();
 #endif
 
 }  // namespace platform_util
 
-#endif  // SHELL_COMMON_PLATFORM_UTIL_H_
+#endif  // ELECTRON_SHELL_COMMON_PLATFORM_UTIL_H_

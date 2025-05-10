@@ -2,9 +2,10 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_MICROTASKS_RUNNER_H_
-#define SHELL_BROWSER_MICROTASKS_RUNNER_H_
+#ifndef ELECTRON_SHELL_BROWSER_MICROTASKS_RUNNER_H_
+#define ELECTRON_SHELL_BROWSER_MICROTASKS_RUNNER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/task/task_observer.h"
 
 namespace v8 {
@@ -29,9 +30,9 @@ class MicrotasksRunner : public base::TaskObserver {
   void DidProcessTask(const base::PendingTask& pending_task) override;
 
  private:
-  v8::Isolate* isolate_;
+  raw_ptr<v8::Isolate> isolate_;
 };
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_MICROTASKS_RUNNER_H_
+#endif  // ELECTRON_SHELL_BROWSER_MICROTASKS_RUNNER_H_

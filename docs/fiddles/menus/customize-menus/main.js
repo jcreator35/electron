@@ -6,8 +6,10 @@ const {
   ipcMain,
   app,
   shell,
-  dialog
-} = require('electron')
+  dialog,
+  autoUpdater
+} = require('electron/main')
+const path = require('node:path')
 
 const menu = new Menu()
 menu.append(new MenuItem({ label: 'Hello' }))
@@ -66,9 +68,9 @@ const template = [
             // on reload, start fresh and close any old
             // open secondary windows
             if (focusedWindow.id === 1) {
-              BrowserWindow.getAllWindows().forEach(win => {
+              for (const win of BrowserWindow.getAllWindows()) {
                 if (win.id > 1) win.close()
-              })
+              }
             }
             focusedWindow.reload()
           }
@@ -100,7 +102,7 @@ const template = [
         })(),
         click: (item, focusedWindow) => {
           if (focusedWindow) {
-            focusedWindow.toggleDevTools()
+            focusedWindow.webContents.toggleDevTools()
           }
         }
       },
@@ -159,7 +161,7 @@ const template = [
       {
         label: 'Learn More',
         click: () => {
-          shell.openExternal('http://electron.atom.io')
+          shell.openExternal('https://electronjs.org')
         }
       }
     ]
@@ -185,7 +187,7 @@ function addUpdateMenuItems (items, position) {
       visible: false,
       key: 'checkForUpdate',
       click: () => {
-        require('electron').autoUpdater.checkForUpdates()
+        autoUpdater.checkForUpdates()
       }
     },
     {
@@ -194,7 +196,7 @@ function addUpdateMenuItems (items, position) {
       visible: false,
       key: 'restartToUpdate',
       click: () => {
-        require('electron').autoUpdater.quitAndInstall()
+        autoUpdater.quitAndInstall()
       }
     }
   ]
@@ -207,15 +209,15 @@ function findReopenMenuItem () {
   if (!menu) return
 
   let reopenMenuItem
-  menu.items.forEach(item => {
+  for (const item of menu.items) {
     if (item.submenu) {
-      item.submenu.items.forEach(item => {
-        if (item.key === 'reopenMenuItem') {
-          reopenMenuItem = item
+      for (const subitem of item.submenu.items) {
+        if (subitem.key === 'reopenMenuItem') {
+          reopenMenuItem = subitem
         }
-      })
+      }
     }
-  })
+  }
   return reopenMenuItem
 }
 
@@ -294,7 +296,7 @@ function createWindow () {
     width: 800,
     height: 600,
     webPreferences: {
-      nodeIntegration: true
+      preload: path.join(__dirname, 'preload.js')
     }
   })
 
@@ -311,12 +313,18 @@ function createWindow () {
     // when you should delete the corresponding element.
     mainWindow = null
   })
+
+  // Open external links in the default browser
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault()
+    shell.openExternal(url)
+  })
 }
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', () => {
+app.whenReady().then(() => {
   createWindow()
   const menu = Menu.buildFromTemplate(template)
   Menu.setApplicationMenu(menu)
@@ -324,7 +332,7 @@ app.on('ready', () => {
 
 // Quit when all windows are closed.
 app.on('window-all-closed', function () {
-  // On OS X it is common for applications and their menu bar
+  // On macOS it is common for applications and their menu bar
   // to stay active until the user quits explicitly with Cmd + Q
   const reopenMenuItem = findReopenMenuItem()
   if (reopenMenuItem) reopenMenuItem.enabled = true
@@ -335,7 +343,7 @@ app.on('window-all-closed', function () {
 })
 
 app.on('activate', function () {
-  // On OS X it's common to re-create a window in the app when the
+  // On macOS it is common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (mainWindow === null) {
     createWindow()

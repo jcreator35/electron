@@ -14,10 +14,10 @@ process:
 
 Electron will listen for V8 inspector protocol messages on the specified `port`,
 an external debugger will need to connect on this port. The default `port` is
-`5858`.
+`9229`.
 
 ```shell
-electron --inspect=5858 your/app
+electron --inspect=9229 your/app
 ```
 
 ### `--inspect-brk=[port]`
@@ -30,4 +30,4 @@ You will need to use a debugger that supports the V8 inspector protocol.
 
 - Connect Chrome by visiting `chrome://inspect` and selecting to inspect the
   launched Electron app present there.
-- [Debugging the Main Process in VSCode](debugging-main-process-vscode.md)
+- [Debugging in VSCode](debugging-vscode.md)

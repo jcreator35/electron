@@ -2,15 +2,19 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_APP_UV_TASK_RUNNER_H_
-#define SHELL_APP_UV_TASK_RUNNER_H_
+#ifndef ELECTRON_SHELL_APP_UV_TASK_RUNNER_H_
+#define ELECTRON_SHELL_APP_UV_TASK_RUNNER_H_
 
 #include <map>
 
-#include "base/callback.h"
-#include "base/location.h"
-#include "base/single_thread_task_runner.h"
-#include "uv.h"  // NOLINT(build/include)
+#include "base/memory/raw_ptr.h"
+#include "base/task/single_thread_task_runner.h"
+#include "shell/common/node_bindings.h"
+
+namespace base {
+class Location;
+class TimeDelta;
+}  // namespace base
 
 namespace electron {
 
@@ -18,6 +22,10 @@ namespace electron {
 class UvTaskRunner : public base::SingleThreadTaskRunner {
  public:
   explicit UvTaskRunner(uv_loop_t* loop);
+
+  // disable copy
+  UvTaskRunner(const UvTaskRunner&) = delete;
+  UvTaskRunner& operator=(const UvTaskRunner&) = delete;
 
   // base::SingleThreadTaskRunner:
   bool PostDelayedTask(const base::Location& from_here,
@@ -30,16 +38,12 @@ class UvTaskRunner : public base::SingleThreadTaskRunner {
 
  private:
   ~UvTaskRunner() override;
-  static void OnTimeout(uv_timer_t* timer);
-  static void OnClose(uv_handle_t* handle);
 
-  uv_loop_t* loop_;
+  raw_ptr<uv_loop_t> loop_;
 
-  std::map<uv_timer_t*, base::OnceClosure> tasks_;
-
-  DISALLOW_COPY_AND_ASSIGN(UvTaskRunner);
+  std::map<UvHandle<uv_timer_t>, base::OnceClosure, UvHandleCompare> tasks_;
 };
 
 }  // namespace electron
 
-#endif  // SHELL_APP_UV_TASK_RUNNER_H_
+#endif  // ELECTRON_SHELL_APP_UV_TASK_RUNNER_H_

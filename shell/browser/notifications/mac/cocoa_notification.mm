@@ -7,12 +7,17 @@
 #include <string>
 #include <utility>
 
+#include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/strings/utf_string_conversions.h"
 #include "shell/browser/notifications/notification_delegate.h"
 #include "shell/browser/notifications/notification_presenter.h"
 #include "skia/ext/skia_utils_mac.h"
+
+// NSUserNotification is deprecated; we need to use the
+// UserNotifications.frameworks API instead
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 namespace electron {
 
@@ -27,25 +32,24 @@ CocoaNotification::~CocoaNotification() {
 }
 
 void CocoaNotification::Show(const NotificationOptions& options) {
-  notification_.reset([[NSUserNotification alloc] init]);
+  notification_ = [[NSUserNotification alloc] init];
 
   NSString* identifier =
       [NSString stringWithFormat:@"%@:notification:%@",
                                  [[NSBundle mainBundle] bundleIdentifier],
-                                 [[[NSUUID alloc] init] UUIDString]];
+                                 [[NSUUID UUID] UUIDString]];
 
   [notification_ setTitle:base::SysUTF16ToNSString(options.title)];
   [notification_ setSubtitle:base::SysUTF16ToNSString(options.subtitle)];
   [notification_ setInformativeText:base::SysUTF16ToNSString(options.msg)];
   [notification_ setIdentifier:identifier];
 
-  if (getenv("ELECTRON_DEBUG_NOTIFICATIONS")) {
+  if (electron::debug_notifications) {
     LOG(INFO) << "Notification created (" << [identifier UTF8String] << ")";
   }
 
   if (!options.icon.drawsNothing()) {
-    NSImage* image = skia::SkBitmapToNSImageWithColorSpace(
-        options.icon, base::mac::GetGenericRGBColorSpace());
+    NSImage* image = skia::SkBitmapToNSImage(options.icon);
     [notification_ setContentImage:image];
   }
 
@@ -57,17 +61,27 @@ void CocoaNotification::Show(const NotificationOptions& options) {
     [notification_ setSoundName:base::SysUTF16ToNSString(options.sound)];
   }
 
-  [notification_ setHasActionButton:false];
+  if (options.has_reply) {
+    [notification_ setHasReplyButton:true];
+    [notification_ setResponsePlaceholder:base::SysUTF16ToNSString(
+                                              options.reply_placeholder)];
+  }
+
+  // We need to explicitly set this to false if there are no
+  // actions, otherwise a Show button will appear by default.
+  if (options.actions.size() == 0)
+    [notification_ setHasActionButton:false];
 
   int i = 0;
   action_index_ = UINT_MAX;
-  NSMutableArray* additionalActions =
-      [[[NSMutableArray alloc] init] autorelease];
+  NSMutableArray* additionalActions = [[NSMutableArray alloc] init];
   for (const auto& action : options.actions) {
-    if (action.type == base::ASCIIToUTF16("button")) {
-      if (action_index_ == UINT_MAX) {
+    if (action.type == u"button") {
+      // If the notification has both a reply and actions,
+      // the reply takes precedence and the actions all
+      // become additional actions.
+      if (!options.has_reply && action_index_ == UINT_MAX) {
         // First button observed is the displayed action
-        [notification_ setHasActionButton:true];
         [notification_
             setActionButtonTitle:base::SysUTF16ToNSString(action.text)];
         action_index_ = i;
@@ -79,20 +93,15 @@ void CocoaNotification::Show(const NotificationOptions& options) {
             actionWithIdentifier:actionIdentifier
                            title:base::SysUTF16ToNSString(action.text)];
         [additionalActions addObject:notificationAction];
-        additional_action_indices_.insert(
-            std::make_pair(base::SysNSStringToUTF8(actionIdentifier), i));
+        additional_action_indices_.try_emplace(
+            base::SysNSStringToUTF8(actionIdentifier), i);
       }
     }
     i++;
   }
+
   if ([additionalActions count] > 0) {
     [notification_ setAdditionalActions:additionalActions];
-  }
-
-  if (options.has_reply) {
-    [notification_ setResponsePlaceholder:base::SysUTF16ToNSString(
-                                              options.reply_placeholder)];
-    [notification_ setHasReplyButton:true];
   }
 
   if (!options.close_button_text.empty()) {
@@ -111,9 +120,7 @@ void CocoaNotification::Dismiss() {
 
   NotificationDismissed();
 
-  this->LogAction("dismissed");
-
-  notification_.reset(nil);
+  notification_ = nil;
 }
 
 void CocoaNotification::NotificationDisplayed() {
@@ -163,8 +170,9 @@ void CocoaNotification::NotificationDismissed() {
 }
 
 void CocoaNotification::LogAction(const char* action) {
-  if (getenv("ELECTRON_DEBUG_NOTIFICATIONS")) {
+  if (electron::debug_notifications && notification_) {
     NSString* identifier = [notification_ valueForKey:@"identifier"];
+    DCHECK(identifier);
     LOG(INFO) << "Notification " << action << " (" << [identifier UTF8String]
               << ")";
   }

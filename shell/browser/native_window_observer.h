@@ -2,33 +2,35 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_NATIVE_WINDOW_OBSERVER_H_
-#define SHELL_BROWSER_NATIVE_WINDOW_OBSERVER_H_
+#ifndef ELECTRON_SHELL_BROWSER_NATIVE_WINDOW_OBSERVER_H_
+#define ELECTRON_SHELL_BROWSER_NATIVE_WINDOW_OBSERVER_H_
 
 #include <string>
+#include <string_view>
 
 #include "base/observer_list_types.h"
-#include "base/strings/string16.h"
 #include "base/values.h"
 #include "ui/base/window_open_disposition.h"
-#include "url/gurl.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
 #endif
 
+class GURL;
+
 namespace gfx {
 class Rect;
-}
+enum class ResizeEdge;
+}  // namespace gfx
 
 namespace electron {
 
 class NativeWindowObserver : public base::CheckedObserver {
  public:
-  ~NativeWindowObserver() override {}
+  ~NativeWindowObserver() override = default;
 
   // Called when the web page in window wants to create a popup window.
-  virtual void WillCreatePopupWindow(const base::string16& frame_name,
+  virtual void WillCreatePopupWindow(const std::u16string& frame_name,
                                      const GURL& target_url,
                                      const std::string& partition_id,
                                      WindowOpenDisposition disposition) {}
@@ -48,14 +50,21 @@ class NativeWindowObserver : public base::CheckedObserver {
   // Called when the window is closed.
   virtual void OnWindowClosed() {}
 
+  // Called when Windows sends WM_QUERYENDSESSION message.
+  virtual void OnWindowQueryEndSession(const std::vector<std::string>& reasons,
+                                       bool* prevent_default) {}
+
   // Called when Windows sends WM_ENDSESSION message
-  virtual void OnWindowEndSession() {}
+  virtual void OnWindowEndSession(const std::vector<std::string>& reasons) {}
 
   // Called when window loses focus.
   virtual void OnWindowBlur() {}
 
   // Called when window gains focus.
   virtual void OnWindowFocus() {}
+
+  // Called when window gained or lost key window status.
+  virtual void OnWindowIsKeyChanged(bool is_key) {}
 
   // Called when window is shown.
   virtual void OnWindowShow() {}
@@ -69,14 +78,14 @@ class NativeWindowObserver : public base::CheckedObserver {
   virtual void OnWindowMinimize() {}
   virtual void OnWindowRestore() {}
   virtual void OnWindowWillResize(const gfx::Rect& new_bounds,
+                                  gfx::ResizeEdge edge,
                                   bool* prevent_default) {}
   virtual void OnWindowResize() {}
+  virtual void OnWindowResized() {}
   virtual void OnWindowWillMove(const gfx::Rect& new_bounds,
                                 bool* prevent_default) {}
   virtual void OnWindowMove() {}
   virtual void OnWindowMoved() {}
-  virtual void OnWindowScrollTouchBegin() {}
-  virtual void OnWindowScrollTouchEnd() {}
   virtual void OnWindowSwipe(const std::string& direction) {}
   virtual void OnWindowRotateGesture(float rotation) {}
   virtual void OnWindowSheetBegin() {}
@@ -87,19 +96,22 @@ class NativeWindowObserver : public base::CheckedObserver {
   virtual void OnWindowLeaveHtmlFullScreen() {}
   virtual void OnWindowAlwaysOnTopChanged() {}
   virtual void OnTouchBarItemResult(const std::string& item_id,
-                                    const base::DictionaryValue& details) {}
+                                    const base::Value::Dict& details) {}
   virtual void OnNewWindowForTab() {}
+  virtual void OnSystemContextMenu(int x, int y, bool* prevent_default) {}
 
 // Called when window message received
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   virtual void OnWindowMessage(UINT message, WPARAM w_param, LPARAM l_param) {}
 #endif
 
   // Called on Windows when App Commands arrive (WM_APPCOMMAND)
   // Some commands are implemented on on other platforms as well
-  virtual void OnExecuteAppCommand(const std::string& command_name) {}
+  virtual void OnExecuteAppCommand(std::string_view command_name) {}
+
+  virtual void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) {}
 };
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_NATIVE_WINDOW_OBSERVER_H_
+#endif  // ELECTRON_SHELL_BROWSER_NATIVE_WINDOW_OBSERVER_H_

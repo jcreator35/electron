@@ -2,17 +2,25 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-#ifndef SHELL_BROWSER_FONT_DEFAULTS_H_
-#define SHELL_BROWSER_FONT_DEFAULTS_H_
+#ifndef ELECTRON_SHELL_BROWSER_FONT_DEFAULTS_H_
+#define ELECTRON_SHELL_BROWSER_FONT_DEFAULTS_H_
 
-namespace content {
+namespace blink {
+namespace web_pref {
 struct WebPreferences;
-}  // namespace content
+}  // namespace web_pref
+}  // namespace blink
 
 namespace electron {
 
-void SetFontDefaults(content::WebPreferences* prefs);
+// Set the default font preferences. The functionality is copied from
+// chrome/browser/prefs_tab_helper.cc with modifications to work
+// without a preference service and cache chrome/browser/font_family_cache.cc
+// that persists across app sessions.
+// Keep the core logic in sync to avoid performance regressions
+// Refs https://issues.chromium.org/issues/400473071
+void SetFontDefaults(blink::web_pref::WebPreferences* prefs);
 
 }  // namespace electron
 
-#endif  // SHELL_BROWSER_FONT_DEFAULTS_H_
+#endif  // ELECTRON_SHELL_BROWSER_FONT_DEFAULTS_H_

@@ -5,23 +5,20 @@
 #include "shell/browser/ui/views/menu_bar.h"
 
 #include <memory>
-#include <set>
-#include <sstream>
 
+#include "shell/browser/native_window.h"
 #include "shell/browser/ui/views/submenu_button.h"
-#include "shell/common/keyboard_util.h"
-#include "ui/aura/window.h"
-#include "ui/base/models/menu_model.h"
+#include "ui/base/mojom/menu_source_type.mojom.h"
+#include "ui/color/color_provider.h"
 #include "ui/native_theme/common_theme.h"
 #include "ui/views/background.h"
 #include "ui/views/layout/box_layout.h"
-#include "ui/views/widget/widget.h"
 
-#if defined(USE_X11)
-#include "chrome/browser/ui/libgtkui/gtk_util.h"
+#if BUILDFLAG(IS_LINUX)
+#include "ui/gtk/gtk_util.h"  // nogncheck
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "ui/gfx/color_utils.h"
 #endif
 
@@ -34,82 +31,71 @@ const SkColor kDefaultColor = SkColorSetARGB(255, 233, 233, 233);
 
 }  // namespace
 
-const char MenuBar::kViewClassName[] = "ElectronMenuBar";
-
-MenuBarColorUpdater::MenuBarColorUpdater(MenuBar* menu_bar)
-    : menu_bar_(menu_bar) {}
-
-MenuBarColorUpdater::~MenuBarColorUpdater() = default;
-
-void MenuBarColorUpdater::OnDidChangeFocus(views::View* focused_before,
-                                           views::View* focused_now) {
-  if (menu_bar_) {
-    // if we've changed window focus, update menu bar colors
-    const auto had_focus = menu_bar_->has_focus_;
-    menu_bar_->has_focus_ = focused_now != nullptr;
-    if (menu_bar_->has_focus_ != had_focus)
-      menu_bar_->UpdateViewColors();
-  }
-}
-
-MenuBar::MenuBar(RootView* window)
-    : background_color_(kDefaultColor),
-      window_(window),
-      color_updater_(new MenuBarColorUpdater(this)) {
-  RefreshColorCache();
+MenuBar::MenuBar(NativeWindow* window, RootView* root_view)
+    : background_color_(kDefaultColor), window_(window), root_view_(root_view) {
+  const ui::NativeTheme* theme = root_view_->GetNativeTheme();
+#if BUILDFLAG(IS_WIN)
+  SetBackground(views::CreateSolidBackground(ui::kColorMenuBackground));
+#endif
+  RefreshColorCache(theme);
   UpdateViewColors();
   SetFocusBehavior(FocusBehavior::ALWAYS);
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal));
-  window_->GetFocusManager()->AddFocusChangeListener(color_updater_.get());
+  window_->AddObserver(this);
+  SetAccessibleName(std::u16string(),
+                    ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
+  SetAccessibleRole(ax::mojom::Role::kMenuBar);
 }
 
 MenuBar::~MenuBar() {
-  window_->GetFocusManager()->RemoveFocusChangeListener(color_updater_.get());
+  window_->RemoveObserver(this);
 }
 
-void MenuBar::SetMenu(AtomMenuModel* model) {
+void MenuBar::SetMenu(ElectronMenuModel* model) {
   menu_model_ = model;
   RebuildChildren();
 }
 
 void MenuBar::SetAcceleratorVisibility(bool visible) {
-  for (auto* child : GetChildrenInZOrder())
+  for (views::View* child : GetChildrenInZOrder())
     static_cast<SubmenuButton*>(child)->SetAcceleratorVisibility(visible);
 }
 
-MenuBar::View* MenuBar::FindAccelChild(base::char16 key) {
-  for (auto* child : GetChildrenInZOrder()) {
+MenuBar::View* MenuBar::FindAccelChild(char16_t key) {
+  if (key == 0)
+    return nullptr;
+  for (views::View* child : GetChildrenInZOrder()) {
     if (static_cast<SubmenuButton*>(child)->accelerator() == key)
       return child;
   }
   return nullptr;
 }
 
-bool MenuBar::HasAccelerator(base::char16 key) {
+bool MenuBar::HasAccelerator(char16_t key) {
   return FindAccelChild(key) != nullptr;
 }
 
-void MenuBar::ActivateAccelerator(base::char16 key) {
+void MenuBar::ActivateAccelerator(char16_t key) {
   auto* child = FindAccelChild(key);
   if (child)
     static_cast<SubmenuButton*>(child)->Activate(nullptr);
 }
 
-int MenuBar::GetItemCount() const {
+size_t MenuBar::GetItemCount() const {
   return menu_model_ ? menu_model_->GetItemCount() : 0;
 }
 
 bool MenuBar::GetMenuButtonFromScreenPoint(const gfx::Point& screenPoint,
-                                           AtomMenuModel** menu_model,
+                                           ElectronMenuModel** menu_model,
                                            views::MenuButton** button) {
   if (!GetBoundsInScreen().Contains(screenPoint))
     return false;
 
   auto children = GetChildrenInZOrder();
-  for (int i = 0, n = children.size(); i < n; ++i) {
+  for (size_t i = 0, n = children.size(); i < n; ++i) {
     if (children[i]->GetBoundsInScreen().Contains(screenPoint) &&
-        (menu_model_->GetTypeAt(i) == AtomMenuModel::TYPE_SUBMENU)) {
+        (menu_model_->GetTypeAt(i) == ElectronMenuModel::TYPE_SUBMENU)) {
       *menu_model = menu_model_->GetSubmenuModelAt(i);
       *button = static_cast<views::MenuButton*>(children[i]);
       return true;
@@ -123,204 +109,148 @@ void MenuBar::OnBeforeExecuteCommand() {
   if (GetPaneFocusTraversable() != nullptr) {
     RemovePaneFocus();
   }
-  window_->RestoreFocus();
+  root_view_->RestoreFocus();
 }
 
 void MenuBar::OnMenuClosed() {
-  SetAcceleratorVisibility(true);
+  SetAcceleratorVisibility(pane_has_focus());
+}
+
+void MenuBar::OnWindowBlur() {
+  UpdateViewColors();
+  SetAcceleratorVisibility(pane_has_focus());
+}
+
+void MenuBar::OnWindowFocus() {
+  UpdateViewColors();
+  SetAcceleratorVisibility(pane_has_focus());
 }
 
 bool MenuBar::AcceleratorPressed(const ui::Accelerator& accelerator) {
-  views::View* focused_view = GetFocusManager()->GetFocusedView();
-  if (!ContainsForFocusSearch(this, focused_view))
-    return false;
-
-  switch (accelerator.key_code()) {
-    case ui::VKEY_MENU:
-    case ui::VKEY_ESCAPE: {
-      RemovePaneFocus();
-      window_->RestoreFocus();
-      return true;
-    }
-    case ui::VKEY_LEFT:
-      GetFocusManager()->AdvanceFocus(true);
-      return true;
-    case ui::VKEY_RIGHT:
-      GetFocusManager()->AdvanceFocus(false);
-      return true;
-    case ui::VKEY_HOME:
-      GetFocusManager()->SetFocusedViewWithReason(
-          GetFirstFocusableChild(),
-          views::FocusManager::FocusChangeReason::kFocusTraversal);
-      return true;
-    case ui::VKEY_END:
-      GetFocusManager()->SetFocusedViewWithReason(
-          GetLastFocusableChild(),
-          views::FocusManager::FocusChangeReason::kFocusTraversal);
-      return true;
-    default: {
-      for (auto* child : GetChildrenInZOrder()) {
-        auto* button = static_cast<SubmenuButton*>(child);
-        bool shifted = false;
-        auto keycode =
-            electron::KeyboardCodeFromCharCode(button->accelerator(), &shifted);
-
-        if (keycode == accelerator.key_code()) {
-          auto event = accelerator.ToKeyEvent();
-          ButtonPressed(button, event);
-          return true;
-        }
-      }
-
-      return false;
-    }
-  }
+  // Treat pressing Alt the same as pressing Esc.
+  const ui::Accelerator& translated =
+      accelerator.key_code() == ui::VKEY_MENU
+          ? ui::Accelerator(ui::VKEY_ESCAPE, accelerator.modifiers(),
+                            accelerator.key_state(), accelerator.time_stamp())
+          : accelerator;
+  bool result = views::AccessiblePaneView::AcceleratorPressed(translated);
+  if (result && !pane_has_focus())
+    root_view_->RestoreFocus();
+  return result;
 }
 
-bool MenuBar::SetPaneFocus(views::View* initial_focus) {
-  // TODO(zcbenz): Submit patch to upstream Chromium to fix the crash.
-  //
-  // Without this check, Electron would crash when running tests.
-  //
-  // Check failed: rules_->CanFocusWindow(window, nullptr).
-  //   logging::LogMessage::~LogMessage
-  //   wm::FocusController::SetFocusedWindow
-  //   wm::FocusController::ResetFocusWithinActiveWindow
-  //   views::View::OnFocus
-  //   views::Button::OnFocus
-  //   views::LabelButton::OnFocus
-  //   views::View::Focus
-  //   views::FocusManager::SetFocusedViewWithReason
-  //   views::AccessiblePaneView::SetPaneFocus
-  //   electron::MenuBar::SetPaneFocus
-  if (initial_focus && initial_focus->GetWidget()) {
-    aura::Window* window = initial_focus->GetWidget()->GetNativeWindow();
-    if (!window || !window->GetRootWindow())
-      return false;
-  }
-
-  bool result = views::AccessiblePaneView::SetPaneFocus(initial_focus);
-
-  if (result) {
-    std::set<ui::KeyboardCode> reg;
-    for (auto* child : GetChildrenInZOrder()) {
-      auto* button = static_cast<SubmenuButton*>(child);
-      bool shifted = false;
-      auto keycode =
-          electron::KeyboardCodeFromCharCode(button->accelerator(), &shifted);
-
-      // We want the menu items to activate if the user presses the accelerator
-      // key, even without alt, since we are now focused on the menu bar
-      if (keycode != ui::VKEY_UNKNOWN && reg.find(keycode) != reg.end()) {
-        reg.insert(keycode);
-        focus_manager()->RegisterAccelerator(
-            ui::Accelerator(keycode, ui::EF_NONE),
-            ui::AcceleratorManager::kNormalPriority, this);
-      }
-    }
-
-    // We want to remove focus / hide menu bar when alt is pressed again
+bool MenuBar::SetPaneFocusAndFocusDefault() {
+  bool result = views::AccessiblePaneView::SetPaneFocusAndFocusDefault();
+  if (result && !accelerator_installed_) {
+    // Listen to Alt key events.
+    // Note that there is no need to unregister the accelerator.
+    accelerator_installed_ = true;
     focus_manager()->RegisterAccelerator(
         ui::Accelerator(ui::VKEY_MENU, ui::EF_ALT_DOWN),
         ui::AcceleratorManager::kNormalPriority, this);
   }
-
   return result;
 }
 
-void MenuBar::RemovePaneFocus() {
-  views::AccessiblePaneView::RemovePaneFocus();
-  SetAcceleratorVisibility(false);
-
-  std::set<ui::KeyboardCode> unreg;
-  for (auto* child : GetChildrenInZOrder()) {
-    auto* button = static_cast<SubmenuButton*>(child);
-    bool shifted = false;
-    auto keycode =
-        electron::KeyboardCodeFromCharCode(button->accelerator(), &shifted);
-
-    if (keycode != ui::VKEY_UNKNOWN && unreg.find(keycode) != unreg.end()) {
-      unreg.insert(keycode);
-      focus_manager()->UnregisterAccelerator(
-          ui::Accelerator(keycode, ui::EF_NONE), this);
-    }
-  }
-
-  focus_manager()->UnregisterAccelerator(
-      ui::Accelerator(ui::VKEY_MENU, ui::EF_ALT_DOWN), this);
+void MenuBar::OnThemeChanged() {
+  views::AccessiblePaneView::OnThemeChanged();
+  const ui::NativeTheme* theme = root_view_->GetNativeTheme();
+  RefreshColorCache(theme);
+  UpdateViewColors();
 }
 
-const char* MenuBar::GetClassName() const {
-  return kViewClassName;
+void MenuBar::OnDidChangeFocus(View* focused_before, View* focused_now) {
+  views::AccessiblePaneView::OnDidChangeFocus(focused_before, focused_now);
+  SetAcceleratorVisibility(pane_has_focus());
+  if (!pane_has_focus())
+    root_view_->RestoreFocus();
 }
 
-void MenuBar::ButtonPressed(views::Button* source, const ui::Event& event) {
+void MenuBar::ButtonPressed(size_t id, const ui::Event& event) {
   // Hide the accelerator when a submenu is activated.
-  SetAcceleratorVisibility(false);
+  SetAcceleratorVisibility(pane_has_focus());
 
   if (!menu_model_)
     return;
 
-  if (!window_->HasFocus())
-    window_->RequestFocus();
+  if (!root_view_->HasFocus())
+    root_view_->RequestFocus();
 
-  int id = source->tag();
-  AtomMenuModel::ItemType type = menu_model_->GetTypeAt(id);
-  if (type != AtomMenuModel::TYPE_SUBMENU) {
+  ElectronMenuModel::ItemType type = menu_model_->GetTypeAt(id);
+  if (type != ElectronMenuModel::TYPE_SUBMENU) {
     menu_model_->ActivatedAt(id, 0);
     return;
   }
 
+  SubmenuButton* source = nullptr;
+  for (views::View* child : children()) {
+    auto* button = static_cast<SubmenuButton*>(child);
+    int button_id = button->GetID();
+    if (button_id >= 0 && static_cast<size_t>(button_id) == id) {
+      source = button;
+      break;
+    }
+  }
+  DCHECK(source);
+
   // Deleted in MenuDelegate::OnMenuClosed
-  MenuDelegate* menu_delegate = new MenuDelegate(this);
-  menu_delegate->RunMenu(
-      menu_model_->GetSubmenuModelAt(id), source,
-      event.IsKeyEvent() ? ui::MENU_SOURCE_KEYBOARD : ui::MENU_SOURCE_MOUSE);
+  auto* menu_delegate = new MenuDelegate(this);
+  menu_delegate->RunMenu(menu_model_->GetSubmenuModelAt(id), source,
+                         event.IsKeyEvent()
+                             ? ui::mojom::MenuSourceType::kKeyboard
+                             : ui::mojom::MenuSourceType::kMouse);
   menu_delegate->AddObserver(this);
 }
 
-void MenuBar::RefreshColorCache() {
-  const ui::NativeTheme* theme = GetNativeTheme();
+void MenuBar::ViewHierarchyChanged(
+    const views::ViewHierarchyChangedDetails& details) {
+  views::AccessiblePaneView::ViewHierarchyChanged(details);
+#if BUILDFLAG(IS_WIN)
+  background_color_ =
+      GetBackground()->color().ResolveToSkColor(root_view_->GetColorProvider());
+#endif
+}
+
+void MenuBar::RefreshColorCache(const ui::NativeTheme* theme) {
   if (theme) {
-#if defined(USE_X11)
-    background_color_ = libgtkui::GetBgColor("GtkMenuBar#menubar");
-    enabled_color_ = libgtkui::GetFgColor(
-        "GtkMenuBar#menubar GtkMenuItem#menuitem GtkLabel");
-    disabled_color_ = libgtkui::GetFgColor(
+#if BUILDFLAG(IS_LINUX)
+    background_color_ = gtk::GetBgColor("GtkMenuBar#menubar");
+    enabled_color_ =
+        gtk::GetFgColor("GtkMenuBar#menubar GtkMenuItem#menuitem GtkLabel");
+    disabled_color_ = gtk::GetFgColor(
         "GtkMenuBar#menubar GtkMenuItem#menuitem:disabled GtkLabel");
-#else
-    background_color_ =
-        ui::GetAuraColor(ui::NativeTheme::kColorId_MenuBackgroundColor, theme);
+#elif BUILDFLAG(IS_WIN)
+    background_color_ = GetBackground()->color().ResolveToSkColor(
+        root_view_->GetColorProvider());
 #endif
   }
 }
 
-void MenuBar::OnThemeChanged() {
-  RefreshColorCache();
-  UpdateViewColors();
-}
-
 void MenuBar::RebuildChildren() {
-  RemoveAllChildViews(true);
-  for (int i = 0, n = GetItemCount(); i < n; ++i) {
-    auto* button =
-        new SubmenuButton(menu_model_->GetLabelAt(i), this, background_color_);
-    button->set_tag(i);
-    AddChildView(button);
+  RemoveAllChildViews();
+  for (size_t i = 0, n = GetItemCount(); i < n; ++i) {
+    auto button = std::make_unique<SubmenuButton>(
+        base::BindRepeating(&MenuBar::ButtonPressed, base::Unretained(this), i),
+        menu_model_->GetLabelAt(i), background_color_);
+    button->SetID(i);
+    AddChildView(std::move(button));
   }
   UpdateViewColors();
 }
 
 void MenuBar::UpdateViewColors() {
+#if BUILDFLAG(IS_LINUX)
   // set menubar background color
   SetBackground(views::CreateSolidBackground(background_color_));
+#endif
 
   // set child colors
   if (menu_model_ == nullptr)
     return;
-#if defined(USE_X11)
-  const auto& textColor = has_focus_ ? enabled_color_ : disabled_color_;
-  for (auto* child : GetChildrenInZOrder()) {
+#if BUILDFLAG(IS_LINUX)
+  const auto& textColor =
+      window_->IsFocused() ? enabled_color_ : disabled_color_;
+  for (views::View* child : GetChildrenInZOrder()) {
     auto* button = static_cast<SubmenuButton*>(child);
     button->SetTextColor(views::Button::STATE_NORMAL, textColor);
     button->SetTextColor(views::Button::STATE_DISABLED, disabled_color_);
@@ -328,12 +258,15 @@ void MenuBar::UpdateViewColors() {
     button->SetTextColor(views::Button::STATE_HOVERED, textColor);
     button->SetUnderlineColor(textColor);
   }
-#elif defined(OS_WIN)
-  for (auto* child : GetChildrenInZOrder()) {
+#elif BUILDFLAG(IS_WIN)
+  for (views::View* child : GetChildrenInZOrder()) {
     auto* button = static_cast<SubmenuButton*>(child);
     button->SetUnderlineColor(color_utils::GetSysSkColor(COLOR_MENUTEXT));
   }
 #endif
 }
+
+BEGIN_METADATA(MenuBar)
+END_METADATA
 
 }  // namespace electron

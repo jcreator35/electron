@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE.chromium file.
 
-#ifndef SHELL_COMMON_GIN_HELPER_ARGUMENTS_H_
-#define SHELL_COMMON_GIN_HELPER_ARGUMENTS_H_
+#ifndef ELECTRON_SHELL_COMMON_GIN_HELPER_ARGUMENTS_H_
+#define ELECTRON_SHELL_COMMON_GIN_HELPER_ARGUMENTS_H_
+
+#include <string_view>
 
 #include "gin/arguments.h"
 
@@ -40,7 +42,7 @@ class Arguments : public gin::Arguments {
 
   // Throw error with custom error message.
   void ThrowError() const;
-  void ThrowError(base::StringPiece message) const;
+  void ThrowError(std::string_view message) const;
 
  private:
   // MUST NOT ADD ANY DATA MEMBER.
@@ -48,4 +50,4 @@ class Arguments : public gin::Arguments {
 
 }  // namespace gin_helper
 
-#endif  // SHELL_COMMON_GIN_HELPER_ARGUMENTS_H_
+#endif  // ELECTRON_SHELL_COMMON_GIN_HELPER_ARGUMENTS_H_

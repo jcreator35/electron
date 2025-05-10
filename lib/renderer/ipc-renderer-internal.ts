@@ -1,30 +1,26 @@
-const { ipc } = process.electronBinding('ipc')
-const v8Util = process.electronBinding('v8_util')
+import { getIPCRenderer } from '@electron/internal/renderer/ipc-renderer-bindings';
 
-// Created by init.js.
-export const ipcRendererInternal = v8Util.getHiddenValue<Electron.IpcRendererInternal>(global, 'ipc-internal')
-const internal = true
+import { EventEmitter } from 'events';
 
-ipcRendererInternal.send = function (channel, ...args) {
-  return ipc.send(internal, channel, args)
-}
+const ipc = getIPCRenderer();
+const internal = true;
 
-ipcRendererInternal.sendSync = function (channel, ...args) {
-  return ipc.sendSync(internal, channel, args)[0]
-}
-
-ipcRendererInternal.sendTo = function (webContentsId, channel, ...args) {
-  return ipc.sendTo(internal, false, webContentsId, channel, args)
-}
-
-ipcRendererInternal.sendToAll = function (webContentsId, channel, ...args) {
-  return ipc.sendTo(internal, true, webContentsId, channel, args)
-}
-
-ipcRendererInternal.invoke = async function<T> (channel: string, ...args: any[]) {
-  const { error, result } = await ipc.invoke<T>(internal, channel, args)
-  if (error) {
-    throw new Error(`Error invoking remote method '${channel}': ${error}`)
+class IpcRendererInternal extends EventEmitter implements ElectronInternal.IpcRendererInternal {
+  send (channel: string, ...args: any[]) {
+    return ipc.send(internal, channel, args);
   }
-  return result
+
+  sendSync (channel: string, ...args: any[]) {
+    return ipc.sendSync(internal, channel, args);
+  }
+
+  async invoke<T> (channel: string, ...args: any[]) {
+    const { error, result } = await ipc.invoke<T>(internal, channel, args);
+    if (error) {
+      throw new Error(`Error invoking remote method '${channel}': ${error}`);
+    }
+    return result;
+  };
 }
+
+export const ipcRendererInternal = new IpcRendererInternal();

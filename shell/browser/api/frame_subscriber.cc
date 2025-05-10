@@ -9,15 +9,16 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
+#include "content/public/browser/web_contents.h"
+#include "media/capture/mojom/video_capture_buffer.mojom.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom-shared.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/skbitmap_operations.h"
 
-namespace electron {
-
-namespace api {
+namespace electron::api {
 
 constexpr static int kMaxFrameRate = 30;
 
@@ -26,11 +27,8 @@ FrameSubscriber::FrameSubscriber(content::WebContents* web_contents,
                                  bool only_dirty)
     : content::WebContentsObserver(web_contents),
       callback_(callback),
-      only_dirty_(only_dirty),
-      weak_ptr_factory_(this) {
-  content::RenderViewHost* rvh = web_contents->GetRenderViewHost();
-  if (rvh)
-    AttachToHost(rvh->GetWidget());
+      only_dirty_(only_dirty) {
+  AttachToHost(web_contents->GetPrimaryMainFrame()->GetRenderWidgetHost());
 }
 
 FrameSubscriber::~FrameSubscriber() = default;
@@ -40,20 +38,20 @@ void FrameSubscriber::AttachToHost(content::RenderWidgetHost* host) {
 
   // The view can be null if the renderer process has crashed.
   // (https://crbug.com/847363)
-  if (!host_->GetView())
+  auto* rwhv = host_->GetView();
+  if (!rwhv)
     return;
 
   // Create and configure the video capturer.
   gfx::Size size = GetRenderViewSize();
-  video_capturer_ = host_->GetView()->CreateVideoCapturer();
+  DCHECK(!size.IsEmpty());
+  video_capturer_ = rwhv->CreateVideoCapturer();
   video_capturer_->SetResolutionConstraints(size, size, true);
   video_capturer_->SetAutoThrottlingEnabled(false);
   video_capturer_->SetMinSizeChangePeriod(base::TimeDelta());
-  video_capturer_->SetFormat(media::PIXEL_FORMAT_ARGB,
-                             gfx::ColorSpace::CreateREC709());
-  video_capturer_->SetMinCapturePeriod(base::TimeDelta::FromSeconds(1) /
-                                       kMaxFrameRate);
-  video_capturer_->Start(this);
+  video_capturer_->SetFormat(media::PIXEL_FORMAT_ARGB);
+  video_capturer_->SetMinCapturePeriod(base::Seconds(1) / kMaxFrameRate);
+  video_capturer_->Start(this, viz::mojom::BufferFormatPreference::kDefault);
 }
 
 void FrameSubscriber::DetachFromHost() {
@@ -63,9 +61,10 @@ void FrameSubscriber::DetachFromHost() {
   host_ = nullptr;
 }
 
-void FrameSubscriber::RenderViewCreated(content::RenderViewHost* host) {
+void FrameSubscriber::RenderFrameCreated(
+    content::RenderFrameHost* render_frame_host) {
   if (!host_)
-    AttachToHost(host->GetWidget());
+    AttachToHost(render_frame_host->GetRenderWidgetHost());
 }
 
 void FrameSubscriber::RenderViewDeleted(content::RenderViewHost* host) {
@@ -74,20 +73,22 @@ void FrameSubscriber::RenderViewDeleted(content::RenderViewHost* host) {
   }
 }
 
-void FrameSubscriber::RenderViewHostChanged(content::RenderViewHost* old_host,
-                                            content::RenderViewHost* new_host) {
-  if ((old_host && old_host->GetWidget() == host_) || (!old_host && !host_)) {
+void FrameSubscriber::PrimaryPageChanged(content::Page& page) {
+  if (auto* host = page.GetMainDocument().GetMainFrame()->GetRenderWidgetHost();
+      host_ != host) {
     DetachFromHost();
-    AttachToHost(new_host->GetWidget());
+    AttachToHost(host);
   }
 }
 
 void FrameSubscriber::OnFrameCaptured(
-    base::ReadOnlySharedMemoryRegion data,
+    ::media::mojom::VideoBufferHandlePtr data,
     ::media::mojom::VideoFrameInfoPtr info,
     const gfx::Rect& content_rect,
     mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
         callbacks) {
+  auto& data_region = data->get_read_only_shmem_region();
+
   gfx::Size size = GetRenderViewSize();
   if (size != content_rect.size()) {
     video_capturer_->SetResolutionConstraints(size, size, true);
@@ -97,11 +98,11 @@ void FrameSubscriber::OnFrameCaptured(
 
   mojo::Remote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
       callbacks_remote(std::move(callbacks));
-  if (!data.IsValid()) {
+  if (!data_region.IsValid()) {
     callbacks_remote->Done();
     return;
   }
-  base::ReadOnlySharedMemoryMapping mapping = data.Map();
+  base::ReadOnlySharedMemoryMapping mapping = data_region.Map();
   if (!mapping.IsValid()) {
     DLOG(ERROR) << "Shared memory mapping failed.";
     return;
@@ -132,7 +133,7 @@ void FrameSubscriber::OnFrameCaptured(
       SkImageInfo::MakeN32(content_rect.width(), content_rect.height(),
                            kPremul_SkAlphaType),
       pixels,
-      media::VideoFrame::RowBytes(media::VideoFrame::kARGBPlane,
+      media::VideoFrame::RowBytes(media::VideoFrame::Plane::kARGB,
                                   info->pixel_format, info->coded_size.width()),
       [](void* addr, void* context) {
         delete static_cast<FramePinner*>(context);
@@ -142,8 +143,6 @@ void FrameSubscriber::OnFrameCaptured(
 
   Done(content_rect, bitmap);
 }
-
-void FrameSubscriber::OnStopped() {}
 
 void FrameSubscriber::Done(const gfx::Rect& damage, const SkBitmap& frame) {
   if (frame.drawsNothing())
@@ -159,8 +158,7 @@ void FrameSubscriber::Done(const gfx::Rect& damage, const SkBitmap& frame) {
   // frame is modified.
   SkBitmap copy;
   copy.allocPixels(SkImageInfo::Make(bitmap.width(), bitmap.height(),
-                                     kRGBA_8888_SkColorType,
-                                     kPremul_SkAlphaType));
+                                     kN32_SkColorType, kPremul_SkAlphaType));
   SkPixmap pixmap;
   bool success = bitmap.peekPixels(&pixmap) && copy.writePixels(pixmap, 0, 0);
   CHECK(success);
@@ -175,6 +173,4 @@ gfx::Size FrameSubscriber::GetRenderViewSize() const {
       gfx::ScaleSize(gfx::SizeF(size), view->GetDeviceScaleFactor()));
 }
 
-}  // namespace api
-
-}  // namespace electron
+}  // namespace electron::api
