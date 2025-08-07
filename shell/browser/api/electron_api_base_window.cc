@@ -13,7 +13,6 @@
 #include "content/public/common/color_parser.h"
 #include "electron/buildflags/buildflags.h"
 #include "gin/dictionary.h"
-#include "gin/handle.h"
 #include "shell/browser/api/electron_api_menu.h"
 #include "shell/browser/api/electron_api_view.h"
 #include "shell/browser/api/electron_api_web_contents.h"
@@ -28,6 +27,7 @@
 #include "shell/common/gin_converters/optional_converter.h"
 #include "shell/common/gin_converters/value_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/handle.h"
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/gin_helper/persistent_dictionary.h"
 #include "shell/common/node_includes.h"
@@ -96,7 +96,7 @@ v8::Local<v8::Value> ToBuffer(v8::Isolate* isolate,
 BaseWindow::BaseWindow(v8::Isolate* isolate,
                        const gin_helper::Dictionary& options) {
   // The parent window.
-  gin::Handle<BaseWindow> parent;
+  gin_helper::Handle<BaseWindow> parent;
   if (options.Get("parent", &parent) && !parent.IsEmpty())
     parent_window_.Reset(isolate, parent.ToV8());
 
@@ -150,7 +150,7 @@ void BaseWindow::InitWith(v8::Isolate* isolate, v8::Local<v8::Object> wrapper) {
   // We can only append this window to parent window's child windows after this
   // window's JS wrapper gets initialized.
   if (!parent_window_.IsEmpty()) {
-    gin::Handle<BaseWindow> parent;
+    gin_helper::Handle<BaseWindow> parent;
     gin::ConvertFromV8(isolate, GetParentWindow(), &parent);
     DCHECK(!parent.IsEmpty());
     parent->child_windows_.Set(isolate, weak_map_id(), wrapper);
@@ -194,7 +194,7 @@ void BaseWindow::OnWindowQueryEndSession(
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
 
-  gin::Handle<gin_helper::internal::Event> event =
+  gin_helper::Handle<gin_helper::internal::Event> event =
       gin_helper::internal::Event::New(isolate);
   v8::Local<v8::Object> event_object = event.ToV8().As<v8::Object>();
 
@@ -211,7 +211,7 @@ void BaseWindow::OnWindowEndSession(const std::vector<std::string>& reasons) {
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
 
-  gin::Handle<gin_helper::internal::Event> event =
+  gin_helper::Handle<gin_helper::internal::Event> event =
       gin_helper::internal::Event::New(isolate);
   v8::Local<v8::Object> event_object = event.ToV8().As<v8::Object>();
 
@@ -356,13 +356,14 @@ void BaseWindow::OnWindowMessage(UINT message, WPARAM w_param, LPARAM l_param) {
 }
 #endif
 
-void BaseWindow::SetContentView(gin::Handle<View> view) {
+void BaseWindow::SetContentView(gin_helper::Handle<View> view) {
   content_view_.Reset(JavascriptEnvironment::GetIsolate(), view.ToV8());
   window_->SetContentView(view->view());
 }
 
 void BaseWindow::CloseImmediately() {
-  window_->CloseImmediately();
+  if (!window_->IsClosed())
+    window_->CloseImmediately();
 }
 
 void BaseWindow::Close() {
@@ -655,7 +656,7 @@ bool BaseWindow::IsTabletMode() const {
 }
 
 void BaseWindow::SetBackgroundColor(const std::string& color_name) {
-  SkColor color = ParseCSSColor(color_name);
+  SkColor color = ParseCSSColor(color_name).value_or(SK_ColorWHITE);
   window_->SetBackgroundColor(color);
 }
 
@@ -684,7 +685,7 @@ double BaseWindow::GetOpacity() const {
 }
 
 void BaseWindow::SetShape(const std::vector<gfx::Rect>& rects) {
-  window_->widget()->SetShape(std::make_unique<std::vector<gfx::Rect>>(rects));
+  window_->SetShape(rects);
 }
 
 void BaseWindow::SetRepresentedFilename(const std::string& filename) {
@@ -729,7 +730,7 @@ bool BaseWindow::IsFocusable() const {
 
 void BaseWindow::SetMenu(v8::Isolate* isolate, v8::Local<v8::Value> value) {
   auto context = isolate->GetCurrentContext();
-  gin::Handle<Menu> menu;
+  gin_helper::Handle<Menu> menu;
   v8::Local<v8::Object> object;
   if (value->IsObject() && value->ToObject(context).ToLocal(&object) &&
       gin::ConvertFromV8(isolate, value, &menu) && !menu.IsEmpty()) {
@@ -762,7 +763,7 @@ void BaseWindow::SetParentWindow(v8::Local<v8::Value> value,
     return;
   }
 
-  gin::Handle<BaseWindow> parent;
+  gin_helper::Handle<BaseWindow> parent;
   if (value->IsNull() || value->IsUndefined()) {
     RemoveFromParentChildWindows();
     parent_window_.Reset();
@@ -849,8 +850,8 @@ void BaseWindow::SetVibrancy(v8::Isolate* isolate,
   window_->SetVibrancy(type, animation_duration_ms);
 }
 
-void BaseWindow::SetBackgroundMaterial(const std::string& material_type) {
-  window_->SetBackgroundMaterial(material_type);
+void BaseWindow::SetBackgroundMaterial(const std::string& material) {
+  window_->SetBackgroundMaterial(material);
 }
 
 #if BUILDFLAG(IS_MAC)
@@ -1088,75 +1089,42 @@ void BaseWindow::SetAppDetails(const gin_helper::Dictionary& options) {
 bool BaseWindow::IsSnapped() const {
   return window_->IsSnapped();
 }
+
+void BaseWindow::SetAccentColor(gin_helper::Arguments* args) {
+  bool accent_color = false;
+  std::string accent_color_string;
+  if (args->GetNext(&accent_color_string)) {
+    std::optional<SkColor> maybe_color = ParseCSSColor(accent_color_string);
+    if (maybe_color.has_value()) {
+      window_->SetAccentColor(maybe_color.value());
+      window_->UpdateWindowAccentColor(window_->IsActive());
+    }
+  } else if (args->GetNext(&accent_color)) {
+    window_->SetAccentColor(accent_color);
+    window_->UpdateWindowAccentColor(window_->IsActive());
+  } else {
+    args->ThrowError(
+        "Invalid accent color value - must be a string or boolean");
+  }
+}
+
+v8::Local<v8::Value> BaseWindow::GetAccentColor() const {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  auto accent_color = window_->GetAccentColor();
+
+  if (std::holds_alternative<bool>(accent_color))
+    return v8::Boolean::New(isolate, std::get<bool>(accent_color));
+  return gin::StringToV8(isolate, std::get<std::string>(accent_color));
+}
 #endif
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
 void BaseWindow::SetTitleBarOverlay(const gin_helper::Dictionary& options,
                                     gin_helper::Arguments* args) {
-  // Ensure WCO is already enabled on this window
-  if (!window_->IsWindowControlsOverlayEnabled()) {
-    args->ThrowError("Titlebar overlay is not enabled");
-    return;
-  }
-
-  auto* window = static_cast<NativeWindowViews*>(window_.get());
-  bool updated = false;
-
-  // Check and update the button color
-  std::string btn_color;
-  if (options.Get(options::kOverlayButtonColor, &btn_color)) {
-    // Parse the string as a CSS color
-    SkColor color;
-    if (!content::ParseCssColorString(btn_color, &color)) {
-      args->ThrowError("Could not parse color as CSS color");
-      return;
-    }
-
-    // Update the view
-    window->set_overlay_button_color(color);
-    updated = true;
-  }
-
-  // Check and update the symbol color
-  std::string symbol_color;
-  if (options.Get(options::kOverlaySymbolColor, &symbol_color)) {
-    // Parse the string as a CSS color
-    SkColor color;
-    if (!content::ParseCssColorString(symbol_color, &color)) {
-      args->ThrowError("Could not parse symbol color as CSS color");
-      return;
-    }
-
-    // Update the view
-    window->set_overlay_symbol_color(color);
-    updated = true;
-  }
-
-  // Check and update the height
-  int height = 0;
-  if (options.Get(options::kOverlayHeight, &height)) {
-    window->set_titlebar_overlay_height(height);
-    updated = true;
-  }
-
-  if (!updated)
-    return;
-
-  // If anything was updated, ensure the overlay is repainted.
-#if BUILDFLAG(IS_WIN)
-  auto* frame_view = static_cast<WinFrameView*>(
-      window->widget()->non_client_view()->frame_view());
-#else
-  auto* frame_view = static_cast<OpaqueFrameView*>(
-      window->widget()->non_client_view()->frame_view());
-#endif
-  frame_view->InvalidateCaptionButtons();
+  static_cast<NativeWindowViews*>(window_.get())
+      ->SetTitleBarOverlay(options, args);
 }
 #endif
-
-int32_t BaseWindow::GetID() const {
-  return weak_map_id();
-}
 
 void BaseWindow::RemoveFromParentChildWindows() {
   if (parent_window_.IsEmpty())
@@ -1164,7 +1132,7 @@ void BaseWindow::RemoveFromParentChildWindows() {
 
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
-  gin::Handle<BaseWindow> parent;
+  gin_helper::Handle<BaseWindow> parent;
   if (!gin::ConvertFromV8(isolate, GetParentWindow(), &parent) ||
       parent.IsEmpty()) {
     return;
@@ -1264,7 +1232,7 @@ void BaseWindow::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("isDocumentEdited", &BaseWindow::IsDocumentEdited)
       .SetMethod("setIgnoreMouseEvents", &BaseWindow::SetIgnoreMouseEvents)
       .SetMethod("setContentProtection", &BaseWindow::SetContentProtection)
-      .SetMethod("_isContentProtected", &BaseWindow::IsContentProtected)
+      .SetMethod("isContentProtected", &BaseWindow::IsContentProtected)
       .SetMethod("setFocusable", &BaseWindow::SetFocusable)
       .SetMethod("isFocusable", &BaseWindow::IsFocusable)
       .SetMethod("setMenu", &BaseWindow::SetMenu)
@@ -1336,6 +1304,8 @@ void BaseWindow::BuildPrototype(v8::Isolate* isolate,
 #if BUILDFLAG(IS_WIN)
       .SetMethod("isSnapped", &BaseWindow::IsSnapped)
       .SetProperty("snapped", &BaseWindow::IsSnapped)
+      .SetMethod("setAccentColor", &BaseWindow::SetAccentColor)
+      .SetMethod("getAccentColor", &BaseWindow::GetAccentColor)
       .SetMethod("hookWindowMessage", &BaseWindow::HookWindowMessage)
       .SetMethod("isWindowMessageHooked", &BaseWindow::IsWindowMessageHooked)
       .SetMethod("unhookWindowMessage", &BaseWindow::UnhookWindowMessage)
@@ -1361,7 +1331,7 @@ void Initialize(v8::Local<v8::Object> exports,
                 v8::Local<v8::Value> unused,
                 v8::Local<v8::Context> context,
                 void* priv) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* const isolate = electron::JavascriptEnvironment::GetIsolate();
   BaseWindow::SetConstructor(isolate, base::BindRepeating(&BaseWindow::New));
 
   gin_helper::Dictionary constructor(isolate,

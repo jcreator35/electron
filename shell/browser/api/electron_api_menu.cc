@@ -50,7 +50,7 @@ struct Converter<SharingItem> {
 
 namespace electron::api {
 
-gin::WrapperInfo Menu::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo Menu::kWrapperInfo = {gin::kEmbedderNativeGin};
 
 Menu::Menu(gin::Arguments* args)
     : model_(std::make_unique<ElectronMenuModel>(this)) {
@@ -213,6 +213,10 @@ void Menu::SetRole(int index, const std::u16string& role) {
   model_->SetRole(index, role);
 }
 
+void Menu::SetCustomType(int index, const std::u16string& customType) {
+  model_->SetCustomType(index, customType);
+}
+
 void Menu::Clear() {
   model_->Clear();
 }
@@ -286,6 +290,7 @@ void Menu::FillObjectTemplate(v8::Isolate* isolate,
       .SetMethod("setSublabel", &Menu::SetSublabel)
       .SetMethod("setToolTip", &Menu::SetToolTip)
       .SetMethod("setRole", &Menu::SetRole)
+      .SetMethod("setCustomType", &Menu::SetCustomType)
       .SetMethod("clear", &Menu::Clear)
       .SetMethod("getIndexOfCommandId", &Menu::GetIndexOfCommandId)
       .SetMethod("getItemCount", &Menu::GetItemCount)
@@ -320,10 +325,9 @@ void Initialize(v8::Local<v8::Object> exports,
                 v8::Local<v8::Value> unused,
                 v8::Local<v8::Context> context,
                 void* priv) {
-  v8::Isolate* isolate = context->GetIsolate();
-
-  gin_helper::Dictionary dict(isolate, exports);
-  dict.Set("Menu", Menu::GetConstructor(context));
+  v8::Isolate* const isolate = electron::JavascriptEnvironment::GetIsolate();
+  gin_helper::Dictionary dict{isolate, exports};
+  dict.Set("Menu", Menu::GetConstructor(isolate, context));
 #if BUILDFLAG(IS_MAC)
   dict.SetMethod("setApplicationMenu", &Menu::SetApplicationMenu);
   dict.SetMethod("sendActionToFirstResponder",

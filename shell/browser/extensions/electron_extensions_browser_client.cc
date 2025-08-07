@@ -26,6 +26,7 @@
 #include "extensions/browser/extension_protocols.h"
 #include "extensions/browser/extensions_browser_interface_binders.h"
 #include "extensions/browser/null_app_sorting.h"
+#include "extensions/browser/safe_browsing_delegate.h"
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/common/features/feature_channel.h"
@@ -55,23 +56,28 @@ using extensions::ExtensionsBrowserClient;
 namespace electron {
 
 ElectronExtensionsBrowserClient::ElectronExtensionsBrowserClient()
-    : api_client_(std::make_unique<extensions::ElectronExtensionsAPIClient>()),
-      process_manager_delegate_(
-          std::make_unique<extensions::ElectronProcessManagerDelegate>()),
-      extension_cache_(std::make_unique<extensions::NullExtensionCache>()) {
-  // Electron does not have a concept of channel, so leave UNKNOWN to
-  // enable all channel-dependent extension APIs.
-  extensions::SetCurrentChannel(version_info::Channel::UNKNOWN);
-  resource_manager_ =
-      std::make_unique<extensions::ElectronComponentExtensionResourceManager>();
-
+    : extension_cache_(std::make_unique<extensions::NullExtensionCache>()),
+      safe_browsing_delegate_(
+          std::make_unique<extensions::SafeBrowsingDelegate>()) {
   AddAPIProvider(
       std::make_unique<extensions::CoreExtensionsBrowserAPIProvider>());
   AddAPIProvider(
       std::make_unique<extensions::ElectronExtensionsBrowserAPIProvider>());
+
+  // Electron does not have a concept of channel, so leave UNKNOWN to
+  // enable all channel-dependent extension APIs.
+  extensions::SetCurrentChannel(version_info::Channel::UNKNOWN);
 }
 
 ElectronExtensionsBrowserClient::~ElectronExtensionsBrowserClient() = default;
+
+void ElectronExtensionsBrowserClient::Init() {
+  process_manager_delegate_ =
+      std::make_unique<extensions::ElectronProcessManagerDelegate>();
+  api_client_ = std::make_unique<extensions::ElectronExtensionsAPIClient>();
+  resource_manager_ =
+      std::make_unique<extensions::ElectronComponentExtensionResourceManager>();
+}
 
 bool ElectronExtensionsBrowserClient::IsShuttingDown() {
   return electron::Browser::Get()->is_shutting_down();
@@ -378,6 +384,11 @@ extensions::KioskDelegate* ElectronExtensionsBrowserClient::GetKioskDelegate() {
   if (!kiosk_delegate_)
     kiosk_delegate_ = std::make_unique<ElectronKioskDelegate>();
   return kiosk_delegate_.get();
+}
+
+extensions::SafeBrowsingDelegate*
+ElectronExtensionsBrowserClient::GetSafeBrowsingDelegate() {
+  return safe_browsing_delegate_.get();
 }
 
 std::string ElectronExtensionsBrowserClient::GetApplicationLocale() {

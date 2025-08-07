@@ -211,18 +211,19 @@ bool AllowWasmCodeGenerationCallback(v8::Local<v8::Context> context,
   return node::AllowWasmCodeGenerationCallback(context, source);
 }
 
-v8::MaybeLocal<v8::Promise> HostImportModuleDynamically(
+v8::MaybeLocal<v8::Promise> HostImportModuleWithPhaseDynamically(
     v8::Local<v8::Context> context,
     v8::Local<v8::Data> v8_host_defined_options,
     v8::Local<v8::Value> v8_referrer_resource_url,
     v8::Local<v8::String> v8_specifier,
-    v8::Local<v8::FixedArray> v8_import_assertions) {
+    v8::ModuleImportPhase import_phase,
+    v8::Local<v8::FixedArray> v8_import_attributes) {
   if (node::Environment::GetCurrent(context) == nullptr) {
     if (electron::IsBrowserProcess() || electron::IsUtilityProcess())
       return {};
-    return blink::V8Initializer::HostImportModuleDynamically(
+    return blink::V8Initializer::HostImportModuleWithPhaseDynamically(
         context, v8_host_defined_options, v8_referrer_resource_url,
-        v8_specifier, v8_import_assertions);
+        v8_specifier, import_phase, v8_import_attributes);
   }
 
   // If we're running with contextIsolation enabled in the renderer process,
@@ -232,15 +233,29 @@ v8::MaybeLocal<v8::Promise> HostImportModuleDynamically(
         blink::WebLocalFrame::FrameForContext(context);
     if (!frame || frame->GetScriptContextWorldId(context) !=
                       electron::WorldIDs::ISOLATED_WORLD_ID) {
-      return blink::V8Initializer::HostImportModuleDynamically(
+      return blink::V8Initializer::HostImportModuleWithPhaseDynamically(
           context, v8_host_defined_options, v8_referrer_resource_url,
-          v8_specifier, v8_import_assertions);
+          v8_specifier, import_phase, v8_import_attributes);
     }
   }
 
+  // TODO: Switch to node::loader::ImportModuleDynamicallyWithPhase
+  // once we land the Node.js version that has it in upstream.
+  CHECK(import_phase == v8::ModuleImportPhase::kEvaluation);
   return node::loader::ImportModuleDynamically(
       context, v8_host_defined_options, v8_referrer_resource_url, v8_specifier,
-      v8_import_assertions);
+      v8_import_attributes);
+}
+
+v8::MaybeLocal<v8::Promise> HostImportModuleDynamically(
+    v8::Local<v8::Context> context,
+    v8::Local<v8::Data> v8_host_defined_options,
+    v8::Local<v8::Value> v8_referrer_resource_url,
+    v8::Local<v8::String> v8_specifier,
+    v8::Local<v8::FixedArray> v8_import_attributes) {
+  return HostImportModuleWithPhaseDynamically(
+      context, v8_host_defined_options, v8_referrer_resource_url, v8_specifier,
+      v8::ModuleImportPhase::kEvaluation, v8_import_attributes);
 }
 
 void HostInitializeImportMetaObject(v8::Local<v8::Context> context,
@@ -359,6 +374,7 @@ bool IsAllowedOption(const std::string_view option) {
       "--throw-deprecation",
       "--trace-deprecation",
       "--trace-warnings",
+      "--no-experimental-global-navigator",
   });
 
   if (debug_options.contains(option))
@@ -440,11 +456,10 @@ base::FilePath GetResourcesPath() {
 #if BUILDFLAG(IS_MAC)
   return MainApplicationBundlePath().Append("Contents").Append("Resources");
 #else
-  auto* command_line = base::CommandLine::ForCurrentProcess();
-  base::FilePath exec_path(command_line->GetProgram());
-  base::PathService::Get(base::FILE_EXE, &exec_path);
+  base::FilePath assets_path;
+  base::PathService::Get(base::DIR_ASSETS, &assets_path);
 
-  return exec_path.DirName().Append(FILE_PATH_LITERAL("resources"));
+  return assets_path.Append(FILE_PATH_LITERAL("resources"));
 #endif
 }
 }  // namespace
@@ -560,7 +575,8 @@ std::vector<std::string> NodeBindings::ParseNodeCliFlags() {
   return args;
 }
 
-void NodeBindings::Initialize(v8::Local<v8::Context> context) {
+void NodeBindings::Initialize(v8::Isolate* const isolate,
+                              v8::Local<v8::Context> context) {
   TRACE_EVENT0("electron", "NodeBindings::Initialize");
   // Open node's error reporting system for browser process.
 
@@ -619,12 +635,13 @@ void NodeBindings::Initialize(v8::Local<v8::Context> context) {
     SetErrorMode(GetErrorMode() & ~SEM_NOGPFAULTERRORBOX);
 #endif
 
-  gin_helper::internal::Event::GetConstructor(context);
+  gin_helper::internal::Event::GetConstructor(isolate, context);
 
   g_is_initialized = true;
 }
 
 std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
+    v8::Isolate* isolate,
     v8::Local<v8::Context> context,
     node::MultiIsolatePlatform* platform,
     size_t max_young_generation_size,
@@ -648,7 +665,6 @@ std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
       break;
   }
 
-  v8::Isolate* isolate = context->GetIsolate();
   gin_helper::Dictionary global(isolate, context->Global());
 
   if (browser_env_ == BrowserEnvironment::kBrowser) {
@@ -750,7 +766,7 @@ std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
     // could be either kExplicit or kScoped depending on whether we're executing
     // from within a Node.js or a Blink entrypoint. Instead, the policy is
     // toggled to kExplicit when entering Node.js through UvRunOnce.
-    is.policy = context->GetIsolate()->GetMicrotasksPolicy();
+    is.policy = isolate->GetMicrotasksPolicy();
 
     // We do not want to use Node.js' message listener as it interferes with
     // Blink's.
@@ -759,8 +775,8 @@ std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
     // Isolate message listeners are additive (you can add multiple), so instead
     // we add an extra one here to ensure that the async hook stack is properly
     // cleared when errors are thrown.
-    context->GetIsolate()->AddMessageListenerWithErrorLevel(
-        ErrorMessageListener, v8::Isolate::kMessageError);
+    isolate->AddMessageListenerWithErrorLevel(ErrorMessageListener,
+                                              v8::Isolate::kMessageError);
 
     // We do not want to use the promise rejection callback that Node.js uses,
     // because it does not send PromiseRejectionEvents to the global script
@@ -776,13 +792,14 @@ std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
         node::IsolateSettingsFlags::SHOULD_NOT_SET_PREPARE_STACK_TRACE_CALLBACK;
   }
 
-  node::SetIsolateUpForNode(context->GetIsolate(), is);
-  context->GetIsolate()->SetHostImportModuleDynamicallyCallback(
-      HostImportModuleDynamically);
-  context->GetIsolate()->SetHostInitializeImportMetaObjectCallback(
+  node::SetIsolateUpForNode(isolate, is);
+  isolate->SetHostImportModuleDynamicallyCallback(HostImportModuleDynamically);
+  isolate->SetHostImportModuleWithPhaseDynamicallyCallback(
+      HostImportModuleWithPhaseDynamically);
+  isolate->SetHostInitializeImportMetaObjectCallback(
       HostInitializeImportMetaObject);
 
-  gin_helper::Dictionary process(context->GetIsolate(), env->process_object());
+  gin_helper::Dictionary process(isolate, env->process_object());
   process.SetReadOnly("type", process_type);
 
   if (browser_env_ == BrowserEnvironment::kBrowser ||
@@ -815,13 +832,14 @@ std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
 }
 
 std::shared_ptr<node::Environment> NodeBindings::CreateEnvironment(
+    v8::Isolate* const isolate,
     v8::Local<v8::Context> context,
     node::MultiIsolatePlatform* platform,
     size_t max_young_generation_size,
     std::optional<base::RepeatingCallback<void()>> on_app_code_ready) {
-  return CreateEnvironment(context, platform, max_young_generation_size,
-                           ElectronCommandLine::AsUtf8(), {},
-                           on_app_code_ready);
+  return CreateEnvironment(
+      isolate, context, platform, max_young_generation_size,
+      ElectronCommandLine::AsUtf8(), {}, on_app_code_ready);
 }
 
 void NodeBindings::LoadEnvironment(node::Environment* env) {
@@ -984,13 +1002,13 @@ void OnNodePreload(node::Environment* env,
   }
 
   // Execute lib/node/init.ts.
-  std::vector<v8::Local<v8::String>> bundle_params = {
-      node::FIXED_ONE_BYTE_STRING(env->isolate(), "process"),
-      node::FIXED_ONE_BYTE_STRING(env->isolate(), "require"),
-  };
-  std::vector<v8::Local<v8::Value>> bundle_args = {process, require};
-  electron::util::CompileAndCall(env->context(), "electron/js2c/node_init",
-                                 &bundle_params, &bundle_args);
+  v8::LocalVector<v8::String> bundle_params(
+      env->isolate(), {node::FIXED_ONE_BYTE_STRING(env->isolate(), "process"),
+                       node::FIXED_ONE_BYTE_STRING(env->isolate(), "require")});
+  v8::LocalVector<v8::Value> bundle_args(env->isolate(), {process, require});
+  electron::util::CompileAndCall(env->isolate(), env->context(),
+                                 "electron/js2c/node_init", &bundle_params,
+                                 &bundle_args);
 }
 
 }  // namespace electron

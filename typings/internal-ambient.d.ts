@@ -133,7 +133,8 @@ declare namespace NodeJS {
 
   interface WebFrameMainBinding {
     WebFrameMain: typeof Electron.WebFrameMain;
-    fromId(processId: number, routingId: number): Electron.WebFrameMain;
+    fromId(processId: number, routingId: number): Electron.WebFrameMain | undefined;
+    fromFrameToken(processId: number, frameToken: string): Electron.WebFrameMain | null;
     _fromIdIfExists(processId: number, routingId: number): Electron.WebFrameMain | null;
     _fromFtnIdIfExists(frameTreeNodeId: number): Electron.WebFrameMain | null;
   }
@@ -147,12 +148,13 @@ declare namespace NodeJS {
 
   interface InternalWebFrame extends Electron.WebFrame {
     getWebPreference<K extends keyof InternalWebPreferences>(name: K): InternalWebPreferences[K];
-    getWebFrameId(window: Window): number;
+    _findFrameByWindow(window: Window): Electron.WebFrame | null;
     allowGuestViewElementDefinition(context: object, callback: Function): void;
   }
 
   interface WebFrameBinding {
     mainFrame: InternalWebFrame;
+    WebFrame: Electron.WebFrame;
   }
 
   type DataPipe = {
@@ -177,6 +179,8 @@ declare namespace NodeJS {
     mode?: string;
     destination?: string;
     bypassCustomProtocolHandlers?: boolean;
+    priority?: 'throttled' | 'idle' | 'lowest' | 'low' | 'medium' | 'highest';
+    priorityIncremental?: boolean;
   };
   type ResponseHead = {
     statusCode: number;
@@ -277,7 +281,7 @@ declare module NodeJS {
 interface ContextMenuItem {
   id: number;
   label: string;
-  type: 'normal' | 'separator' | 'subMenu' | 'checkbox';
+  type: 'normal' | 'separator' | 'subMenu' | 'checkbox' | 'header' | 'palette';
   checked: boolean;
   enabled: boolean;
   subItems: ContextMenuItem[];

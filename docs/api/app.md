@@ -9,6 +9,7 @@ closed:
 
 ```js
 const { app } = require('electron')
+
 app.on('window-all-closed', () => {
   app.quit()
 })
@@ -601,6 +602,7 @@ Returns `string` - The current application directory.
     * `%APPDATA%` on Windows
     * `$XDG_CONFIG_HOME` or `~/.config` on Linux
     * `~/Library/Application Support` on macOS
+  * `assets` The directory where app assets such as `resources.pak` are stored. By default this is the same as the folder containing the `exe` path. Available on Windows and Linux only.
   * `userData` The directory for storing your app's configuration files, which
     by default is the `appData` directory appended with your app's name. By
     convention files storing user data should be written to this directory, and
@@ -615,7 +617,7 @@ Returns `string` - The current application directory.
     directory.
   * `temp` Temporary directory.
   * `exe` The current executable file.
-  * `module` The `libchromiumcontent` library.
+  * `module` The location of the Chromium module. By default this is synonymous with `exe`.
   * `desktop` The current user's Desktop directory.
   * `documents` Directory for a user's "My Documents".
   * `downloads` Directory for a user's downloads.
@@ -774,6 +776,22 @@ bar, and on macOS, you can visit it from dock menu.
 ### `app.clearRecentDocuments()` _macOS_ _Windows_
 
 Clears the recent documents list.
+
+### `app.getRecentDocuments()` _macOS_ _Windows_
+
+Returns `string[]` - An array containing documents in the most recent documents list.
+
+```js
+const { app } = require('electron')
+
+const path = require('node:path')
+
+const file = path.join(app.getPath('desktop'), 'foo.txt')
+app.addRecentDocument(file)
+
+const recents = app.getRecentDocuments()
+console.log(recents) // ['/path/to/desktop/foo.txt'}
+```
 
 ### `app.setAsDefaultProtocolClient(protocol[, path, args])`
 
@@ -1023,6 +1041,7 @@ starts:
 
 ```js
 const { app, BrowserWindow } = require('electron')
+
 let myWindow = null
 
 const additionalData = { myKey: 'myValue' }
@@ -1226,6 +1245,8 @@ For `infoType` equal to `complete`:
 For `infoType` equal to `basic`:
   Promise is fulfilled with `Object` containing fewer attributes than when requested with `complete`. Here's an example of basic response:
 
+<!-- eslint-skip -->
+
 ```js
 {
   auxAttributes:
@@ -1339,6 +1360,7 @@ latest version.
 
 ``` js
 const { app } = require('electron')
+
 const path = require('node:path')
 
 const appFolder = path.dirname(process.execPath)
@@ -1413,6 +1435,7 @@ Returns `Function` - This function **must** be called once you have finished acc
 
 ```js
 const { app, dialog } = require('electron')
+
 const fs = require('node:fs')
 
 let filepath

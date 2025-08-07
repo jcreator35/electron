@@ -27,7 +27,7 @@ void MenuViews::PopupAt(BaseWindow* window,
                         int positioning_item,
                         ui::mojom::MenuSourceType source_type,
                         base::OnceClosure callback) {
-  auto* native_window = static_cast<NativeWindowViews*>(window->window());
+  const NativeWindow* native_window = window->window();
   if (!native_window)
     return;
 
@@ -84,9 +84,9 @@ void MenuViews::OnClosed(int32_t window_id, base::OnceClosure callback) {
 }
 
 // static
-gin::Handle<Menu> Menu::New(gin::Arguments* args) {
-  auto handle = gin::CreateHandle(args->isolate(),
-                                  static_cast<Menu*>(new MenuViews(args)));
+gin_helper::Handle<Menu> Menu::New(gin::Arguments* args) {
+  auto handle = gin_helper::CreateHandle(
+      args->isolate(), static_cast<Menu*>(new MenuViews(args)));
   gin_helper::CallMethod(args->isolate(), handle.get(), "_init");
   return handle;
 }

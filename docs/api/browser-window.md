@@ -40,6 +40,7 @@ the window after this event will have no visual flash:
 
 ```js
 const { BrowserWindow } = require('electron')
+
 const win = new BrowserWindow({ show: false })
 win.once('ready-to-show', () => {
   win.show()
@@ -149,6 +150,10 @@ Process: [Main](../glossary.md#main-process)
 `BrowserWindow` is an [EventEmitter][event-emitter].
 
 It creates a new `BrowserWindow` with native properties as set by the `options`.
+
+> [!WARNING]
+> Electron's built-in classes cannot be subclassed in user code.
+> For more information, see [the FAQ](../faq.md#class-inheritance-does-not-work-with-electron-built-in-modules).
 
 ### `new BrowserWindow([options])`
 
@@ -373,6 +378,7 @@ e.g. `APPCOMMAND_BROWSER_BACKWARD` is emitted as `browser-backward`.
 
 ```js
 const { BrowserWindow } = require('electron')
+
 const win = new BrowserWindow()
 win.on('app-command', (e, cmd) => {
   // Navigate the window back when the user hits their mouse back button
@@ -820,6 +826,7 @@ Resizes and moves the window to the supplied bounds. Any properties that are not
 
 ```js
 const { BrowserWindow } = require('electron')
+
 const win = new BrowserWindow()
 
 // set all bounds properties
@@ -1080,6 +1087,7 @@ a HTML-rendered toolbar. For example:
 
 ```js
 const { BrowserWindow } = require('electron')
+
 const win = new BrowserWindow()
 
 const toolbarRect = document.getElementById('toolbar').getBoundingClientRect()
@@ -1232,9 +1240,10 @@ method:
 
 ```js
 const { BrowserWindow } = require('electron')
+
 const win = new BrowserWindow()
 
-const url = require('url').format({
+const url = require('node:url').format({
   protocol: 'file',
   slashes: true,
   pathname: require('node:path').join(__dirname, 'index.html')
@@ -1248,6 +1257,7 @@ the following:
 
 ```js
 const { BrowserWindow } = require('electron')
+
 const win = new BrowserWindow()
 
 win.loadURL('http://localhost:8000/post', {
@@ -1430,6 +1440,43 @@ Sets the properties for the window's taskbar button.
 > `relaunchCommand` and `relaunchDisplayName` must always be set
 > together. If one of those properties is not set, then neither will be used.
 
+#### `win.setAccentColor(accentColor)` _Windows_
+
+* `accentColor` boolean | string - The accent color for the window. By default, follows user preference in System Settings.
+
+Sets the system accent color and highlighting of active window border.
+
+The `accentColor` parameter accepts the following values:
+
+* **Color string** - Sets a custom accent color using standard CSS color formats (Hex, RGB, RGBA, HSL, HSLA, or named colors). Alpha values in RGBA/HSLA formats are ignored and the color is treated as fully opaque.
+* **`true`** - Uses the system's default accent color from user preferences in System Settings.
+* **`false`** - Explicitly disables accent color highlighting for the window.
+
+Examples:
+
+```js
+const win = new BrowserWindow({ frame: false })
+
+// Set red accent color.
+win.setAccentColor('#ff0000')
+
+// RGB format (alpha ignored if present).
+win.setAccentColor('rgba(255,0,0,0.5)')
+
+// Use system accent color.
+win.setAccentColor(true)
+
+// Disable accent color.
+win.setAccentColor(false)
+```
+
+#### `win.getAccentColor()` _Windows_
+
+Returns `string | boolean` - the system accent color and highlighting of active window border in Hex RGB format.
+
+If a color has been set for the window that differs from the system accent color, the window accent color will
+be returned. Otherwise, a boolean will be returned, with `true` indicating that the window uses the global system accent color, and `false` indicating that accent color highlighting is disabled for this window.
+
 #### `win.showDefinitionForSelection()` _macOS_
 
 Same as `webContents.showDefinitionForSelection()`.
@@ -1523,10 +1570,14 @@ events.
 
 Prevents the window contents from being captured by other apps.
 
-On macOS it sets the NSWindow's sharingType to NSWindowSharingNone.
-On Windows it calls SetWindowDisplayAffinity with `WDA_EXCLUDEFROMCAPTURE`.
+On macOS it sets the NSWindow's [`sharingType`](https://developer.apple.com/documentation/appkit/nswindow/sharingtype-swift.property?language=objc) to [`NSWindowSharingNone`](https://developer.apple.com/documentation/appkit/nswindow/sharingtype-swift.enum/none?language=objc).
+On Windows it calls [`SetWindowDisplayAffinity`](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity) with `WDA_EXCLUDEFROMCAPTURE`.
 For Windows 10 version 2004 and up the window will be removed from capture entirely,
 older Windows versions behave as if `WDA_MONITOR` is applied capturing a black window.
+
+#### `win.isContentProtected()` _macOS_ _Windows_
+
+Returns `boolean` - whether or not content protection is currently enabled.
 
 #### `win.setFocusable(focusable)` _macOS_ _Windows_
 
