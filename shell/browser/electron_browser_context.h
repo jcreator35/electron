@@ -13,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include "base/files/file_path.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/media_stream_request.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -94,7 +95,7 @@ class ElectronBrowserContext : public content::BrowserContext {
   std::string GetMediaDeviceIDSalt();
 
   // content::BrowserContext:
-  base::FilePath GetPath() override;
+  base::FilePath GetPath() const override;
   bool IsOffTheRecord() override;
   std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;

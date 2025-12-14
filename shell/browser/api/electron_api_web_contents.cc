@@ -87,7 +87,6 @@
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "shell/browser/api/electron_api_browser_window.h"
 #include "shell/browser/api/electron_api_debugger.h"
-#include "shell/browser/api/electron_api_session.h"
 #include "shell/browser/api/electron_api_web_frame_main.h"
 #include "shell/browser/api/frame_subscriber.h"
 #include "shell/browser/api/message_port.h"
@@ -552,17 +551,17 @@ base::IDMap<WebContents*>& GetAllWebContents() {
 
 void OnCapturePageDone(gin_helper::Promise<gfx::Image> promise,
                        base::ScopedClosureRunner capture_handle,
-                       const SkBitmap& bitmap) {
+                       const viz::CopyOutputBitmapWithMetadata& result) {
   auto ui_task_runner = content::GetUIThreadTaskRunner({});
   if (!ui_task_runner->RunsTasksInCurrentSequence()) {
     ui_task_runner->PostTask(
         FROM_HERE, base::BindOnce(&OnCapturePageDone, std::move(promise),
-                                  std::move(capture_handle), bitmap));
+                                  std::move(capture_handle), result));
     return;
   }
 
   // Hack to enable transparency in captured image
-  promise.Resolve(gfx::Image::CreateFrom1xBitmap(bitmap));
+  promise.Resolve(gfx::Image::CreateFrom1xBitmap(result.bitmap));
   capture_handle.RunAndReset();
 }
 
@@ -573,8 +572,8 @@ std::optional<base::TimeDelta> GetCursorBlinkInterval() {
   if (system_value)
     return *system_value;
 #elif BUILDFLAG(IS_LINUX)
-  if (auto* linux_ui = ui::LinuxUi::instance())
-    return linux_ui->GetCursorBlinkInterval();
+  if (auto* native_theme = ui::NativeTheme::GetInstanceForNativeUi())
+    return native_theme->caret_blink_interval();
 #elif BUILDFLAG(IS_WIN)
   const auto system_msec = ::GetCaretBlinkTime();
   if (system_msec != 0) {
@@ -755,8 +754,7 @@ WebContents::WebContents(v8::Isolate* isolate,
   script_executor_ = std::make_unique<extensions::ScriptExecutor>(web_contents);
 #endif
 
-  auto session = Session::CreateFrom(isolate, GetBrowserContext());
-  session_.Reset(isolate, session.ToV8());
+  session_ = Session::FromOrCreate(isolate, GetBrowserContext());
 
   SetUserAgent(GetBrowserContext()->GetUserAgent());
 
@@ -778,9 +776,9 @@ WebContents::WebContents(v8::Isolate* isolate,
 {
   DCHECK(type != Type::kRemote)
       << "Can't take ownership of a remote WebContents";
-  auto session = Session::CreateFrom(isolate, GetBrowserContext());
-  session_.Reset(isolate, session.ToV8());
-  InitWithSessionAndOptions(isolate, std::move(web_contents), session,
+  session_ = Session::FromOrCreate(isolate, GetBrowserContext());
+  InitWithSessionAndOptions(isolate, std::move(web_contents),
+                            session_->browser_context(),
                             gin::Dictionary::CreateEmpty(isolate));
 }
 
@@ -816,6 +814,8 @@ WebContents::WebContents(v8::Isolate* isolate,
       options.Get(options::kOffscreen, &use_offscreen_dict);
       use_offscreen_dict.Get(options::kUseSharedTexture,
                              &offscreen_use_shared_texture_);
+      use_offscreen_dict.Get(options::kSharedTexturePixelFormat,
+                             &offscreen_shared_texture_pixel_format_);
     }
   }
 
@@ -829,15 +829,15 @@ WebContents::WebContents(v8::Isolate* isolate,
 
   // Obtain the session.
   std::string partition;
-  gin_helper::Handle<api::Session> session;
-  if (options.Get("session", &session) && !session.IsEmpty()) {
+  api::Session* session = nullptr;
+  if (options.Get("session", &session) && session) {
   } else if (options.Get("partition", &partition)) {
     session = Session::FromPartition(isolate, partition);
   } else {
     // Use the default session if not specified.
     session = Session::FromPartition(isolate, "");
   }
-  session_.Reset(isolate, session.ToV8());
+  session_ = session;
 
   std::unique_ptr<content::WebContents> web_contents;
   if (is_guest()) {
@@ -853,6 +853,7 @@ WebContents::WebContents(v8::Isolate* isolate,
     if (embedder_ && embedder_->IsOffScreen()) {
       auto* view = new OffScreenWebContentsView(
           false, offscreen_use_shared_texture_,
+          offscreen_shared_texture_pixel_format_,
           base::BindRepeating(&WebContents::OnPaint, base::Unretained(this)));
       params.view = view;
       params.delegate_view = view;
@@ -874,6 +875,7 @@ WebContents::WebContents(v8::Isolate* isolate,
     content::WebContents::CreateParams params(session->browser_context());
     auto* view = new OffScreenWebContentsView(
         transparent, offscreen_use_shared_texture_,
+        offscreen_shared_texture_pixel_format_,
         base::BindRepeating(&WebContents::OnPaint, base::Unretained(this)));
     params.view = view;
     params.delegate_view = view;
@@ -886,7 +888,8 @@ WebContents::WebContents(v8::Isolate* isolate,
     web_contents = content::WebContents::Create(params);
   }
 
-  InitWithSessionAndOptions(isolate, std::move(web_contents), session, options);
+  InitWithSessionAndOptions(isolate, std::move(web_contents),
+                            session->browser_context(), options);
 }
 
 void WebContents::InitZoomController(content::WebContents* web_contents,
@@ -907,10 +910,10 @@ void WebContents::InitZoomController(content::WebContents* web_contents,
 void WebContents::InitWithSessionAndOptions(
     v8::Isolate* isolate,
     std::unique_ptr<content::WebContents> owned_web_contents,
-    gin_helper::Handle<api::Session> session,
+    ElectronBrowserContext* browser_context,
     const gin_helper::Dictionary& options) {
   Observe(owned_web_contents.get());
-  InitWithWebContents(std::move(owned_web_contents), session->browser_context(),
+  InitWithWebContents(std::move(owned_web_contents), browser_context,
                       is_guest());
 
   inspectable_web_contents_->GetView()->SetDelegate(this);
@@ -1118,9 +1121,10 @@ void WebContents::OnDidAddMessageToConsole(
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
 
-  gin_helper::Handle<gin_helper::internal::Event> event =
+  gin_helper::internal::Event* event =
       gin_helper::internal::Event::New(isolate);
-  v8::Local<v8::Object> event_object = event.ToV8().As<v8::Object>();
+  v8::Local<v8::Object> event_object =
+      event->GetWrapper(isolate).ToLocalChecked();
 
   gin_helper::Dictionary dict(isolate, event_object);
   dict.SetGetter("frame", source_frame);
@@ -1132,7 +1136,7 @@ void WebContents::OnDidAddMessageToConsole(
   // TODO(samuelmaddock): Delete when deprecated arguments are fully removed.
   dict.Set("_level", static_cast<int32_t>(level));
 
-  EmitWithoutEvent("-console-message", event);
+  EmitWithoutEvent("-console-message", event_object);
 }
 
 void WebContents::OnCreateWindow(
@@ -1229,6 +1233,7 @@ void WebContents::MaybeOverrideCreateParamsForNewWindow(
     if (is_offscreen) {
       auto* view = new OffScreenWebContentsView(
           false, offscreen_use_shared_texture_,
+          offscreen_shared_texture_pixel_format_,
           base::BindRepeating(&WebContents::OnPaint, base::Unretained(this)));
       create_params->view = view;
       create_params->delegate_view = view;
@@ -1434,7 +1439,7 @@ bool WebContents::IsFullscreen() const {
 
 void WebContents::EnterFullscreen(const url::Origin& origin,
                                   ExclusiveAccessBubbleType bubble_type,
-                                  const int64_t display_id) {}
+                                  FullscreenTabParams fullscreen_tab_params) {}
 
 content::WebContents* WebContents::GetWebContentsForExclusiveAccess() {
   return web_contents();
@@ -1480,7 +1485,7 @@ void WebContents::OnEnterFullscreenModeForTab(
   owner_window()->set_fullscreen_transition_type(
       NativeWindow::FullScreenTransitionType::kHTML);
   exclusive_access_manager_.fullscreen_controller()->EnterFullscreenModeForTab(
-      requesting_frame, options.display_id);
+      requesting_frame, FullscreenTabParams{options.display_id});
 
   SetHtmlApiFullscreen(true);
 
@@ -1516,9 +1521,10 @@ void WebContents::RendererUnresponsive(
     base::RepeatingClosure hang_monitor_restarter) {
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
-  gin_helper::Handle<gin_helper::internal::Event> event =
+  gin_helper::internal::Event* event =
       gin_helper::internal::Event::New(isolate);
-  v8::Local<v8::Object> event_object = event.ToV8().As<v8::Object>();
+  v8::Local<v8::Object> event_object =
+      event->GetWrapper(isolate).ToLocalChecked();
   gin::Dictionary dict(isolate, event_object);
 
   auto* web_contents_impl = static_cast<content::WebContentsImpl*>(source);
@@ -1532,7 +1538,7 @@ void WebContents::RendererUnresponsive(
       static_cast<content::RenderWidgetHostImpl*>(render_widget_host);
   dict.Set("rendererInitialized", rwh_impl->renderer_initialized());
 
-  EmitWithoutEvent("-unresponsive", event);
+  EmitWithoutEvent("-unresponsive", event_object);
 }
 
 void WebContents::RendererResponsive(
@@ -1701,12 +1707,13 @@ content::JavaScriptDialogManager* WebContents::GetJavaScriptDialogManager(
 void WebContents::OnAudioStateChanged(bool audible) {
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
-  gin_helper::Handle<gin_helper::internal::Event> event =
+  gin_helper::internal::Event* event =
       gin_helper::internal::Event::New(isolate);
-  v8::Local<v8::Object> event_object = event.ToV8().As<v8::Object>();
+  v8::Local<v8::Object> event_object =
+      event->GetWrapper(isolate).ToLocalChecked();
   gin::Dictionary dict(isolate, event_object);
   dict.Set("audible", audible);
-  EmitWithoutEvent("audio-state-changed", event);
+  EmitWithoutEvent("audio-state-changed", event_object);
 }
 
 void WebContents::BeforeUnloadFired(bool proceed) {
@@ -1763,14 +1770,15 @@ void WebContents::RenderFrameCreated(
     return;
   }
 
-  content::RenderFrameHost::LifecycleState lifecycle_state =
-      render_frame_host->GetLifecycleState();
-  if (lifecycle_state == content::RenderFrameHost::LifecycleState::kActive) {
+  if (render_frame_host->GetLifecycleState() ==
+      content::RenderFrameHost::LifecycleState::kActive) {
     v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
-    v8::HandleScope handle_scope(isolate);
+    v8::HandleScope handle_scope{isolate};
     auto details = gin_helper::Dictionary::CreateEmpty(isolate);
     details.SetGetter("frame", render_frame_host);
     Emit("frame-created", details);
+    content::WebContents::FromRenderFrameHost(render_frame_host)
+        ->SetSupportsDraggableRegions(true);
   }
 }
 
@@ -1969,9 +1977,10 @@ bool WebContents::EmitNavigationEvent(
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
 
-  gin_helper::Handle<gin_helper::internal::Event> event =
+  gin_helper::internal::Event* event =
       gin_helper::internal::Event::New(isolate);
-  v8::Local<v8::Object> event_object = event.ToV8().As<v8::Object>();
+  v8::Local<v8::Object> event_object =
+      event->GetWrapper(isolate).ToLocalChecked();
 
   gin_helper::Dictionary dict(isolate, event_object);
   dict.Set("url", url);
@@ -1982,8 +1991,8 @@ bool WebContents::EmitNavigationEvent(
   dict.SetGetter("frame", frame_host);
   dict.SetGetter("initiator", initiator_frame_host);
 
-  EmitWithoutEvent(event_name, event, url, is_same_document, is_main_frame,
-                   frame_process_id, frame_routing_id);
+  EmitWithoutEvent(event_name, event_object, url, is_same_document,
+                   is_main_frame, frame_process_id, frame_routing_id);
   return event->GetDefaultPrevented();
 }
 
@@ -2023,16 +2032,21 @@ SkRegion* WebContents::draggable_region() {
 
 void WebContents::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
+  base::AutoReset<bool> resetter(&is_safe_to_delete_, false);
   EmitNavigationEvent("did-start-navigation", navigation_handle);
 }
 
 void WebContents::DidRedirectNavigation(
     content::NavigationHandle* navigation_handle) {
+  base::AutoReset<bool> resetter(&is_safe_to_delete_, false);
   EmitNavigationEvent("did-redirect-navigation", navigation_handle);
 }
 
 void WebContents::ReadyToCommitNavigation(
     content::NavigationHandle* navigation_handle) {
+  base::AutoReset<bool> resetter(&is_safe_to_delete_, false);
+  EmitNavigationEvent("-ready-to-commit-navigation", navigation_handle);
+
   // Don't focus content in an inactive window.
   if (!owner_window())
     return;
@@ -2247,7 +2261,8 @@ void WebContents::WebContentsDestroyed() {
   v8::Local<v8::Object> wrapper;
   if (!GetWrapper(isolate).ToLocal(&wrapper))
     return;
-  wrapper->SetAlignedPointerInInternalField(0, nullptr);
+  wrapper->SetAlignedPointerInInternalField(0, nullptr,
+                                            v8::kEmbedderDataTypeTagDefault);
 
   // Tell WebViewGuestDelegate that the WebContents has been destroyed.
   if (guest_delegate_)
@@ -2290,7 +2305,7 @@ void WebContents::SetBackgroundThrottling(bool allowed) {
   rwh_impl->disable_hidden_ = !background_throttling_;
   web_contents()->GetRenderViewHost()->SetSchedulerThrottling(allowed);
 
-  if (rwh_impl->is_hidden()) {
+  if (rwh_impl->IsHidden()) {
     rwh_impl->WasShown({});
   }
 }
@@ -2375,12 +2390,15 @@ void WebContents::LoadURL(const GURL& url,
   // http://crbug.com/347742.
   auto& ctrl_impl = static_cast<content::NavigationControllerImpl&>(
       web_contents()->GetController());
-  if (ctrl_impl.in_navigate_to_pending_entry()) {
+  if (!is_safe_to_delete_ || ctrl_impl.in_navigate_to_pending_entry()) {
     Emit("did-fail-load", static_cast<int>(net::ERR_FAILED),
          net::ErrorToShortString(net::ERR_FAILED), url.possibly_invalid_spec(),
          true);
     return;
   }
+
+  if (web_contents()->NeedToFireBeforeUnloadOrUnloadEvents())
+    pending_unload_url_ = url;
 
   // Discard non-committed entries to ensure we don't re-use a pending entry.
   web_contents()->GetController().DiscardNonCommittedEntries();
@@ -2827,7 +2845,8 @@ void WebContents::EnableDeviceEmulation(
         frame_host->GetView()->GetRenderWidgetHost());
     if (widget_host_impl) {
       auto& frame_widget = widget_host_impl->GetAssociatedFrameWidget();
-      frame_widget->EnableDeviceEmulation(params);
+      frame_widget->EnableDeviceEmulation(
+          params, blink::mojom::DeviceEmulationCacheBehavior::kClearCache);
     }
   }
 }
@@ -3023,23 +3042,24 @@ void OnPDFCreated(gin_helper::Promise<v8::Local<v8::Value>> promise,
 }
 }  // namespace
 
-void WebContents::Print(gin::Arguments* args) {
-  auto options = gin_helper::Dictionary::CreateEmpty(args->isolate());
-  base::Value::Dict settings;
+void WebContents::Print(gin::Arguments* const args) {
+  v8::Isolate* const isolate = args->isolate();
+  auto options = gin_helper::Dictionary::CreateEmpty(isolate);
 
   if (args->Length() >= 1 && !args->GetNext(&options)) {
-    gin_helper::ErrorThrower(args->isolate())
-        .ThrowError("webContents.print(): Invalid print settings specified.");
+    args->ThrowTypeError(
+        "webContents.print(): Invalid print settings specified.");
     return;
   }
 
   printing::CompletionCallback callback;
   if (args->Length() == 2 && !args->GetNext(&callback)) {
-    gin_helper::ErrorThrower(args->isolate())
-        .ThrowError("webContents.print(): Invalid optional callback provided.");
+    args->ThrowTypeError(
+        "webContents.print(): Invalid optional callback provided.");
     return;
   }
 
+  base::Value::Dict settings;
   if (options.IsEmptyObject()) {
     content::RenderFrameHost* rfh = GetRenderFrameHostToUse(web_contents());
     if (!rfh)
@@ -3061,7 +3081,7 @@ void WebContents::Print(gin::Arguments* args) {
                options.ValueOrDefault("printBackground", false));
 
   // Set custom margin settings
-  auto margins = gin_helper::Dictionary::CreateEmpty(args->isolate());
+  auto margins = gin_helper::Dictionary::CreateEmpty(isolate);
   if (options.Get("margins", &margins)) {
     printing::mojom::MarginType margin_type =
         printing::mojom::MarginType::kDefaultMargins;
@@ -3251,21 +3271,19 @@ v8::Local<v8::Promise> WebContents::PrintToPDF(const base::Value& settings) {
 }
 #endif
 
-void WebContents::AddWorkSpace(gin::Arguments* args,
+void WebContents::AddWorkSpace(v8::Isolate* const isolate,
                                const base::FilePath& path) {
   if (path.empty()) {
-    gin_helper::ErrorThrower(args->isolate())
-        .ThrowError("path cannot be empty");
+    gin_helper::ErrorThrower{isolate}.ThrowError("path cannot be empty");
     return;
   }
   DevToolsAddFileSystem(std::string(), path);
 }
 
-void WebContents::RemoveWorkSpace(gin::Arguments* args,
+void WebContents::RemoveWorkSpace(v8::Isolate* const isolate,
                                   const base::FilePath& path) {
   if (path.empty()) {
-    gin_helper::ErrorThrower(args->isolate())
-        .ThrowError("path cannot be empty");
+    gin_helper::ErrorThrower{isolate}.ThrowError("path cannot be empty");
     return;
   }
   DevToolsRemoveFileSystem(path);
@@ -3343,11 +3361,10 @@ void WebContents::ReplaceMisspelling(const std::u16string& word) {
   web_contents()->ReplaceMisspelling(word);
 }
 
-uint32_t WebContents::FindInPage(gin::Arguments* args) {
+uint32_t WebContents::FindInPage(gin::Arguments* const args) {
   std::u16string search_text;
   if (!args->GetNext(&search_text) || search_text.empty()) {
-    gin_helper::ErrorThrower(args->isolate())
-        .ThrowError("Must provide a non-empty search content");
+    args->ThrowTypeError("Must provide a non-empty search content");
     return 0;
   }
 
@@ -3500,8 +3517,8 @@ void WebContents::EndFrameSubscription() {
   frame_subscriber_.reset();
 }
 
-void WebContents::StartDrag(const gin_helper::Dictionary& item,
-                            gin::Arguments* args) {
+void WebContents::StartDrag(v8::Isolate* const isolate,
+                            const gin_helper::Dictionary& item) {
   base::FilePath file;
   std::vector<base::FilePath> files;
   if (!item.Get("files", &files) && item.Get("file", &file)) {
@@ -3510,13 +3527,13 @@ void WebContents::StartDrag(const gin_helper::Dictionary& item,
 
   v8::Local<v8::Value> icon_value;
   if (!item.Get("icon", &icon_value)) {
-    gin_helper::ErrorThrower(args->isolate())
-        .ThrowError("'icon' parameter is required");
+    gin_helper::ErrorThrower{isolate}.ThrowError(
+        "'icon' parameter is required");
     return;
   }
 
   NativeImage* icon = nullptr;
-  if (!NativeImage::TryConvertNativeImage(args->isolate(), icon_value, &icon) ||
+  if (!NativeImage::TryConvertNativeImage(isolate, icon_value, &icon) ||
       icon->image().IsEmpty()) {
     return;
   }
@@ -3526,8 +3543,8 @@ void WebContents::StartDrag(const gin_helper::Dictionary& item,
     base::CurrentThread::ScopedAllowApplicationTasksInNativeNestedLoop allow;
     DragFileItems(files, icon->image(), web_contents()->GetNativeView());
   } else {
-    gin_helper::ErrorThrower(args->isolate())
-        .ThrowError("Must specify either 'file' or 'files' option");
+    gin_helper::ErrorThrower{isolate}.ThrowError(
+        "Must specify either 'file' or 'files' option");
   }
 }
 
@@ -3572,7 +3589,7 @@ v8::Local<v8::Promise> WebContents::CapturePage(gin::Arguments* args) {
   // current system, increase the requested bitmap size to capture it all.
   gfx::Size bitmap_size = view_size;
   const gfx::NativeView native_view = view->GetNativeView();
-  const float scale = display::Screen::GetScreen()
+  const float scale = display::Screen::Get()
                           ->GetDisplayNearestView(native_view)
                           .device_scale_factor();
   if (scale > 1.0f)
@@ -3628,16 +3645,17 @@ void WebContents::OnPaint(const gfx::Rect& dirty_rect,
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
   v8::HandleScope handle_scope(isolate);
 
-  gin_helper::Handle<gin_helper::internal::Event> event =
+  gin_helper::internal::Event* event =
       gin_helper::internal::Event::New(isolate);
-  v8::Local<v8::Object> event_object = event.ToV8().As<v8::Object>();
+  v8::Local<v8::Object> event_object =
+      event->GetWrapper(isolate).ToLocalChecked();
   gin_helper::Dictionary dict(isolate, event_object);
 
   if (offscreen_use_shared_texture_) {
     dict.Set("texture", tex);
   }
 
-  EmitWithoutEvent("paint", event, dirty_rect,
+  EmitWithoutEvent("paint", event_object, dirty_rect,
                    gfx::Image::CreateFrom1xBitmap(bitmap));
 }
 
@@ -3749,7 +3767,11 @@ v8::Local<v8::Value> WebContents::GetOwnerBrowserWindow(
 }
 
 v8::Local<v8::Value> WebContents::Session(v8::Isolate* isolate) {
-  return v8::Local<v8::Value>::New(isolate, session_);
+  v8::Local<v8::Object> wrapper;
+  if (!session_->GetWrapper(isolate).ToLocal(&wrapper)) {
+    return v8::Null(isolate);
+  }
+  return v8::Local<v8::Value>::New(isolate, wrapper);
 }
 
 content::WebContents* WebContents::HostWebContents() const {
@@ -3790,11 +3812,15 @@ v8::Local<v8::Value> WebContents::DevToolsWebContents(v8::Isolate* isolate) {
 }
 
 v8::Local<v8::Value> WebContents::Debugger(v8::Isolate* isolate) {
-  if (debugger_.IsEmpty()) {
-    auto handle = electron::api::Debugger::Create(isolate, web_contents());
-    debugger_.Reset(isolate, handle.ToV8());
+  if (!debugger_) {
+    debugger_ = electron::api::Debugger::Create(isolate, web_contents());
   }
-  return v8::Local<v8::Value>::New(isolate, debugger_);
+
+  v8::Local<v8::Object> wrapper;
+  if (!debugger_->GetWrapper(isolate).ToLocal(&wrapper)) {
+    return v8::Null(isolate);
+  }
+  return v8::Local<v8::Value>::New(isolate, wrapper);
 }
 
 content::RenderFrameHost* WebContents::MainFrame() {
@@ -3878,8 +3904,15 @@ void WebContents::RunBeforeUnloadDialog(content::WebContents* web_contents,
                                         content::RenderFrameHost* rfh,
                                         bool is_reload,
                                         DialogClosedCallback callback) {
-  // TODO: asyncify?
   bool default_prevented = Emit("will-prevent-unload");
+
+  if (pending_unload_url_.has_value() && !default_prevented) {
+    Emit("did-fail-load", static_cast<int>(net::ERR_ABORTED),
+         net::ErrorToShortString(net::ERR_ABORTED),
+         pending_unload_url_.value().possibly_invalid_spec(), true);
+    pending_unload_url_.reset();
+  }
+
   std::move(callback).Run(default_prevented, std::u16string());
 }
 
@@ -4182,8 +4215,8 @@ void WebContents::DevToolsIndexPath(
     return;
 
   std::vector<std::string> excluded_folders;
-  std::optional<base::Value> parsed_excluded_folders =
-      base::JSONReader::Read(excluded_folders_message);
+  std::optional<base::Value> parsed_excluded_folders = base::JSONReader::Read(
+      excluded_folders_message, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (parsed_excluded_folders && parsed_excluded_folders->is_list()) {
     for (const base::Value& folder_path : parsed_excluded_folders->GetList()) {
       if (folder_path.is_string())

@@ -6,10 +6,10 @@ Subject: chore: add electron deps to gitignores
 Makes things like "git status" quicker when developing electron locally
 
 diff --git a/.gitignore b/.gitignore
-index 83c172f64cc3b02f7a739cb2754b784b7cc5427d..e7e272eababc23b5fc5f0b0c619948d7174206fa 100644
+index e3b01b0a2b878681a861f76cb10f5b40bbc29a3d..277b05e37dadfd32fbcbbe1e596508aafd4313ba 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -223,6 +223,7 @@ vs-chromium-project.txt
+@@ -228,6 +228,7 @@ vs-chromium-project.txt
  /data
  /delegate_execute
  /device/serial/device_serial_mojo.xml
@@ -18,10 +18,10 @@ index 83c172f64cc3b02f7a739cb2754b784b7cc5427d..e7e272eababc23b5fc5f0b0c619948d7
  /google_apis/gcm/gcm.xml
  /googleurl
 diff --git a/third_party/.gitignore b/third_party/.gitignore
-index a750ba32fa50d4367682bf11b88e6a8a4700dc46..c3188f418a6368b35adfdcb2cd96de1614826d39 100644
+index b5761637e4b91efb38b5c1d4be9f59b271d4f0db..010c4f7bfe4ea8c82eff4924c83668c271b834fd 100644
 --- a/third_party/.gitignore
 +++ b/third_party/.gitignore
-@@ -46,7 +46,9 @@
+@@ -45,7 +45,9 @@
  /directxsdk
  /dragonbox/src
  /edk2

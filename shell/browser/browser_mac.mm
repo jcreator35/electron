@@ -137,13 +137,10 @@ void Browser::Focus(gin::Arguments* args) {
   gin_helper::Dictionary opts;
   bool steal_focus = false;
 
-  if (args->GetNext(&opts)) {
-    gin_helper::ErrorThrower thrower(args->isolate());
-    if (!opts.Get("steal", &steal_focus)) {
-      thrower.ThrowError(
-          "Expected options object to contain a 'steal' boolean property");
-      return;
-    }
+  if (args->GetNext(&opts) && !opts.Get("steal", &steal_focus)) {
+    args->ThrowTypeError(
+        "Expected options object to contain a 'steal' boolean property");
+    return;
   }
 
   [[AtomApplication sharedApplication] activateIgnoringOtherApps:steal_focus];
@@ -426,19 +423,18 @@ v8::Local<v8::Value> Browser::GetLoginItemSettings(
 #else
   // If the app was previously set as a LoginItem with the deprecated API,
   // we should report its LoginItemSettings via the old API.
-  LoginItemSettings settings_deprecated = GetLoginItemSettingsDeprecated();
   if (@available(macOS 13, *)) {
     const std::string status =
         platform_util::GetLoginItemEnabled(options.type, options.service_name);
     if (status == "enabled-deprecated") {
-      settings = settings_deprecated;
+      settings = GetLoginItemSettingsDeprecated();
     } else {
       settings.open_at_login = status == "enabled";
       settings.opened_at_login = was_launched_at_login_;
       settings.status = status;
     }
   } else {
-    settings = settings_deprecated;
+    settings = GetLoginItemSettingsDeprecated();
   }
 #endif
   return gin::ConvertToV8(isolate, settings);
@@ -546,6 +542,9 @@ v8::Local<v8::Promise> Browser::DockShow(v8::Isolate* isolate) {
   last_dock_show_ = base::Time::Now();
   gin_helper::Promise<void> promise(isolate);
   v8::Local<v8::Promise> handle = promise.GetHandle();
+
+  for (auto* const& window : WindowList::GetWindows())
+    [window->GetNativeWindow().GetNativeNSWindow() setCanHide:YES];
 
   BOOL active = [[NSRunningApplication currentApplication] isActive];
   ProcessSerialNumber psn = {0, kCurrentProcess};

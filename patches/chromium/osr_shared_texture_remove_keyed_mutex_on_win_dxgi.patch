@@ -10,11 +10,11 @@ The keyed mutex introduce extra performance cost and spikes. However, at offscre
 For resolving complex conflict please pin @reitowo
 For more reason please see: https://crrev.com/c/5465148
 
-diff --git a/gpu/ipc/service/gpu_memory_buffer_factory_dxgi.cc b/gpu/ipc/service/gpu_memory_buffer_factory_dxgi.cc
-index 31543b5b018313d2e5890f599109bd48d7bc5e64..2f4003b0557ae275ee3697062fafb6428f5da010 100644
---- a/gpu/ipc/service/gpu_memory_buffer_factory_dxgi.cc
-+++ b/gpu/ipc/service/gpu_memory_buffer_factory_dxgi.cc
-@@ -166,7 +166,8 @@ gfx::GpuMemoryBufferHandle GpuMemoryBufferFactoryDXGI::CreateNativeGmbHandle(
+diff --git a/gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc b/gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc
+index 93fca64b215fb2f9170fcf5883cfed29ec3f5f69..cc95dab3bb5d4afebddb83154c47f200e282e521 100644
+--- a/gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc
++++ b/gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc
+@@ -381,7 +381,8 @@ gfx::GpuMemoryBufferHandle D3DImageBackingFactory::CreateGpuMemoryBufferHandle(
    // so make sure that the usage is one that we support.
    DCHECK(usage == gfx::BufferUsage::GPU_READ ||
           usage == gfx::BufferUsage::SCANOUT ||
@@ -24,7 +24,7 @@ index 31543b5b018313d2e5890f599109bd48d7bc5e64..2f4003b0557ae275ee3697062fafb642
        << "Incorrect usage, usage=" << gfx::BufferUsageToString(usage);
  
    D3D11_TEXTURE2D_DESC desc = {
-@@ -180,7 +181,9 @@ gfx::GpuMemoryBufferHandle GpuMemoryBufferFactoryDXGI::CreateNativeGmbHandle(
+@@ -395,7 +396,9 @@ gfx::GpuMemoryBufferHandle D3DImageBackingFactory::CreateGpuMemoryBufferHandle(
        D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET,
        0,
        D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
@@ -36,19 +36,10 @@ index 31543b5b018313d2e5890f599109bd48d7bc5e64..2f4003b0557ae275ee3697062fafb642
    Microsoft::WRL::ComPtr<ID3D11Texture2D> d3d11_texture;
  
 diff --git a/media/video/renderable_gpu_memory_buffer_video_frame_pool.cc b/media/video/renderable_gpu_memory_buffer_video_frame_pool.cc
-index 46c48aa7d08b336f577f81163bf4cc0596a0b2fb..c1098fbc5ea57031f2e153379ae0baaddd3bbe5f 100644
+index 5e025cfae4ac056791fab1b7016b5f7da3204239..ac428cffba7854c28c5e71fefa67c51bbeb34248 100644
 --- a/media/video/renderable_gpu_memory_buffer_video_frame_pool.cc
 +++ b/media/video/renderable_gpu_memory_buffer_video_frame_pool.cc
-@@ -182,7 +182,7 @@ bool FrameResources::Initialize(VideoPixelFormat format,
- 
-   auto* context = pool_->GetContext();
- 
--  constexpr gfx::BufferUsage kBufferUsage =
-+  gfx::BufferUsage buffer_usage =
- #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS)
-       gfx::BufferUsage::SCANOUT_VEA_CPU_READ
- #else
-@@ -193,6 +193,23 @@ bool FrameResources::Initialize(VideoPixelFormat format,
+@@ -209,6 +209,23 @@ bool FrameResources::Initialize(VideoPixelFormat format,
    const gfx::Size coded_size =
        GetCodedSizeForVideoPixelFormat(format, visible_size_);
  
@@ -72,12 +63,3 @@ index 46c48aa7d08b336f577f81163bf4cc0596a0b2fb..c1098fbc5ea57031f2e153379ae0baad
    gpu::SharedImageUsageSet usage =
  #if BUILDFLAG(IS_MAC)
        gpu::SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX |
-@@ -230,7 +247,7 @@ bool FrameResources::Initialize(VideoPixelFormat format,
-       VideoPixelFormatToSharedImageFormat(format).value();
- 
-   shared_image_ = context->CreateSharedImage(
--      coded_size, kBufferUsage, si_format, color_space, usage, sync_token_);
-+      coded_size, buffer_usage, si_format, color_space, usage, sync_token_);
-   if (!shared_image_) {
-     DLOG(ERROR) << "Failed to allocate shared image for frame: visible_size="
-                 << visible_size_.ToString()

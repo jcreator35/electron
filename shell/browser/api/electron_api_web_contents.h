@@ -31,6 +31,8 @@
 #include "content/public/common/stop_find_action.h"
 #include "electron/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
+#include "shell/browser/api/electron_api_debugger.h"
+#include "shell/browser/api/electron_api_session.h"
 #include "shell/browser/api/save_page_handler.h"
 #include "shell/browser/background_throttling_source.h"
 #include "shell/browser/event_emitter_mixin.h"
@@ -47,6 +49,7 @@
 #include "shell/common/gin_helper/wrappable.h"
 #include "shell/common/web_contents_utility.mojom.h"
 #include "ui/base/models/image_model.h"
+#include "v8/include/cppgc/persistent.h"
 
 #if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
 #include "extensions/common/mojom/view_type.mojom-forward.h"
@@ -264,8 +267,8 @@ class WebContents final : public ExclusiveAccessContext,
   void SetNextChildWebPreferences(const gin_helper::Dictionary);
 
   // DevTools workspace api.
-  void AddWorkSpace(gin::Arguments* args, const base::FilePath& path);
-  void RemoveWorkSpace(gin::Arguments* args, const base::FilePath& path);
+  void AddWorkSpace(v8::Isolate* isolate, const base::FilePath& path);
+  void RemoveWorkSpace(v8::Isolate* isolate, const base::FilePath& path);
 
   // Editing commands.
   void Undo();
@@ -300,7 +303,7 @@ class WebContents final : public ExclusiveAccessContext,
   void EndFrameSubscription();
 
   // Dragging native items.
-  void StartDrag(const gin_helper::Dictionary& item, gin::Arguments* args);
+  void StartDrag(v8::Isolate* isolate, const gin_helper::Dictionary& item);
 
   // Captures the page with |rect|, |callback| would be called when capturing is
   // done.
@@ -479,7 +482,7 @@ class WebContents final : public ExclusiveAccessContext,
   void InitWithSessionAndOptions(
       v8::Isolate* isolate,
       std::unique_ptr<content::WebContents> web_contents,
-      gin_helper::Handle<class Session> session,
+      ElectronBrowserContext* browser_context,
       const gin_helper::Dictionary& options);
 
 #if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
@@ -695,7 +698,7 @@ class WebContents final : public ExclusiveAccessContext,
   bool IsFullscreen() const override;
   void EnterFullscreen(const url::Origin& origin,
                        ExclusiveAccessBubbleType bubble_type,
-                       const int64_t display_id) override;
+                       FullscreenTabParams fullscreen_tab_params) override;
   void ExitFullscreen() override {}
   void UpdateExclusiveAccessBubble(
       const ExclusiveAccessBubbleParams& params,
@@ -768,9 +771,9 @@ class WebContents final : public ExclusiveAccessContext,
   // Update the html fullscreen flag in both browser and renderer.
   void UpdateHtmlApiFullscreen(bool fullscreen);
 
-  v8::Global<v8::Value> session_;
+  cppgc::Persistent<api::Session> session_;
   v8::Global<v8::Value> devtools_web_contents_;
-  v8::Global<v8::Value> debugger_;
+  cppgc::Persistent<api::Debugger> debugger_;
 
   std::unique_ptr<WebViewGuestDelegate> guest_delegate_;
   std::unique_ptr<FrameSubscriber> frame_subscriber_;
@@ -814,6 +817,7 @@ class WebContents final : public ExclusiveAccessContext,
 
   // Whether offscreen rendering use gpu shared texture
   bool offscreen_use_shared_texture_ = false;
+  std::string offscreen_shared_texture_pixel_format_ = "argb";
 
   // Whether window is fullscreened by HTML5 api.
   bool html_fullscreen_ = false;
@@ -841,6 +845,8 @@ class WebContents final : public ExclusiveAccessContext,
   // that field to ensure the dtor destroys them in the right order.
   raw_ptr<WebContentsZoomController> zoom_controller_ = nullptr;
 
+  std::optional<GURL> pending_unload_url_ = std::nullopt;
+
   // Maps url to file path, used by the file requests sent from devtools.
   typedef std::map<std::string, base::FilePath> PathsMap;
   PathsMap saved_files_;
@@ -857,6 +863,9 @@ class WebContents final : public ExclusiveAccessContext,
 #if BUILDFLAG(ENABLE_PRINTING)
   const scoped_refptr<base::TaskRunner> print_task_runner_;
 #endif
+
+  // Track navigation state in order to avoid potential re-entrancy crashes.
+  bool is_safe_to_delete_ = true;
 
   // Stores the frame that's currently in fullscreen, nullptr if there is none.
   raw_ptr<content::RenderFrameHost> fullscreen_frame_ = nullptr;

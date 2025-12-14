@@ -51,7 +51,7 @@
 #if BUILDFLAG(IS_WIN)
 #include "base/win/scoped_gdi_object.h"
 #include "shell/common/asar/archive.h"
-#include "ui/gfx/icon_util.h"
+#include "ui/gfx/win/icon_util.h"
 #endif
 
 namespace electron::api {
@@ -577,11 +577,11 @@ gin::ObjectTemplateBuilder NativeImage::GetObjectTemplateBuilder(
   gin::PerIsolateData* data = gin::PerIsolateData::From(isolate);
   auto* wrapper_info = &kWrapperInfo;
   v8::Local<v8::FunctionTemplate> constructor =
-      data->GetFunctionTemplate(wrapper_info);
+      data->DeprecatedGetFunctionTemplate(wrapper_info);
   if (constructor.IsEmpty()) {
     constructor = v8::FunctionTemplate::New(isolate);
     constructor->SetClassName(gin::StringToV8(isolate, GetTypeName()));
-    data->SetFunctionTemplate(wrapper_info, constructor);
+    data->DeprecatedSetFunctionTemplate(wrapper_info, constructor);
   }
   return gin::ObjectTemplateBuilder(isolate, GetTypeName(),
                                     constructor->InstanceTemplate())

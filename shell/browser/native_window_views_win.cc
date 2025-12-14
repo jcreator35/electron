@@ -31,15 +31,15 @@ namespace electron {
 
 namespace {
 
-void SetWindowBorderAndCaptionColor(HWND hwnd, COLORREF color) {
-  if (base::win::GetVersion() < base::win::Version::WIN11)
-    return;
+void SetWindowBorderAndCaptionColor(HWND hwnd, COLORREF color, bool has_frame) {
+  HRESULT result;
+  if (has_frame) {
+    result =
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &color, sizeof(color));
 
-  HRESULT result =
-      DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &color, sizeof(color));
-
-  if (FAILED(result))
-    LOG(WARNING) << "Failed to set caption color";
+    if (FAILED(result))
+      LOG(WARNING) << "Failed to set caption color";
+  }
 
   result =
       DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &color, sizeof(color));
@@ -324,11 +324,6 @@ bool NativeWindowViews::PreHandleMSG(UINT message,
 
       return false;
     }
-    case WM_RBUTTONUP: {
-      if (!has_frame())
-        electron::api::WebContents::SetDisableDraggableRegions(false);
-      return false;
-    }
     case WM_GETMINMAXINFO: {
       WINDOWPLACEMENT wp;
       wp.length = sizeof(WINDOWPLACEMENT);
@@ -464,11 +459,12 @@ bool NativeWindowViews::PreHandleMSG(UINT message,
       return false;
     }
     case WM_SYSCOMMAND: {
-      // Mask is needed to account for double clicking title bar to maximize
-      WPARAM max_mask = 0xFFF0;
-      if (transparent() && ((w_param & max_mask) == SC_MAXIMIZE)) {
+      WPARAM cmd = w_param & 0xFFF0;
+      // Needed to account for double clicking title bar to maximize.
+      if (transparent() && (cmd == SC_MAXIMIZE))
         return true;
-      }
+      if (cmd == SC_MINIMIZE)
+        was_snapped_ = IsSnapped();
       return false;
     }
     case WM_INITMENU: {
@@ -513,7 +509,7 @@ void NativeWindowViews::HandleSizeEvent(WPARAM w_param, LPARAM l_param) {
       WINDOWPLACEMENT wp;
       wp.length = sizeof(WINDOWPLACEMENT);
 
-      if (GetWindowPlacement(GetAcceleratedWidget(), &wp)) {
+      if (GetWindowPlacement(GetAcceleratedWidget(), &wp) && !was_snapped_) {
         last_normal_placement_bounds_ = gfx::Rect(wp.rcNormalPosition);
       }
 
@@ -521,8 +517,11 @@ void NativeWindowViews::HandleSizeEvent(WPARAM w_param, LPARAM l_param) {
       // multiple times for one resize because of the SetWindowPlacement call.
       if (w_param == SIZE_MAXIMIZED &&
           last_window_state_ != ui::mojom::WindowShowState::kMaximized) {
-        if (last_window_state_ == ui::mojom::WindowShowState::kMinimized)
+        if (last_window_state_ == ui::mojom::WindowShowState::kMinimized) {
           NotifyWindowRestore();
+          if (was_snapped_)
+            was_snapped_ = false;
+        }
         last_window_state_ = ui::mojom::WindowShowState::kMaximized;
         NotifyWindowMaximize();
         ResetWindowControls();
@@ -546,6 +545,8 @@ void NativeWindowViews::HandleSizeEvent(WPARAM w_param, LPARAM l_param) {
           } else {
             last_window_state_ = ui::mojom::WindowShowState::kNormal;
             NotifyWindowRestore();
+            if (was_snapped_)
+              was_snapped_ = false;
           }
           break;
         default:
@@ -590,7 +591,8 @@ void NativeWindowViews::UpdateWindowAccentColor(bool active) {
   }
 
   COLORREF final_color = border_color.value_or(DWMWA_COLOR_DEFAULT);
-  SetWindowBorderAndCaptionColor(GetAcceleratedWidget(), final_color);
+  SetWindowBorderAndCaptionColor(GetAcceleratedWidget(), final_color,
+                                 has_frame());
 }
 
 void NativeWindowViews::SetAccentColor(
@@ -658,7 +660,7 @@ void NativeWindowViews::SetRoundedCorners(bool rounded) {
 void NativeWindowViews::SetForwardMouseMessages(bool forward) {
   if (forward && !forwarding_mouse_messages_) {
     forwarding_mouse_messages_ = true;
-    forwarding_windows_.insert(this);
+    forwarding_windows_->insert(this);
 
     // Subclassing is used to fix some issues when forwarding mouse messages;
     // see comments in |SubclassProc|.
@@ -670,11 +672,11 @@ void NativeWindowViews::SetForwardMouseMessages(bool forward) {
     }
   } else if (!forward && forwarding_mouse_messages_) {
     forwarding_mouse_messages_ = false;
-    forwarding_windows_.erase(this);
+    forwarding_windows_->erase(this);
 
     RemoveWindowSubclass(legacy_window_, SubclassProc, 1);
 
-    if (forwarding_windows_.empty()) {
+    if (forwarding_windows_->empty()) {
       UnhookWindowsHookEx(mouse_hook_);
       mouse_hook_ = nullptr;
     }
@@ -721,7 +723,7 @@ LRESULT CALLBACK NativeWindowViews::MouseHookProc(int n_code,
   // the cursor since they are in a state where they would otherwise ignore all
   // mouse input.
   if (w_param == WM_MOUSEMOVE) {
-    for (auto* window : forwarding_windows_) {
+    for (auto* window : *forwarding_windows_) {
       // At first I considered enumerating windows to check whether the cursor
       // was directly above the window, but since nothing bad seems to happen
       // if we post the message even if some other window occludes it I have

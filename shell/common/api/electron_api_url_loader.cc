@@ -492,7 +492,7 @@ SimpleURLLoaderWrapper::GetURLLoaderFactoryForURL(const GURL& url) {
   // correctly intercept file:// scheme URLs.
   if (const bool bypass = request_options_ & kBypassCustomProtocolHandlers;
       !bypass) {
-    const std::string_view scheme = url.scheme_piece();
+    const std::string_view scheme = url.scheme();
     const auto* const protocol_registry =
         ProtocolRegistry::FromBrowserContext(browser_context_);
 
@@ -698,14 +698,15 @@ gin_helper::Handle<SimpleURLLoaderWrapper> SimpleURLLoaderWrapper::Create(
   ElectronBrowserContext* browser_context = nullptr;
   if (electron::IsBrowserProcess()) {
     std::string partition;
-    gin_helper::Handle<Session> session;
+    Session* session = nullptr;
     if (!opts.Get("session", &session)) {
       if (opts.Get("partition", &partition))
         session = Session::FromPartition(args->isolate(), partition);
       else  // default session
         session = Session::FromPartition(args->isolate(), "");
     }
-    browser_context = session->browser_context();
+    if (session)
+      browser_context = session->browser_context();
   }
 
   auto ret = gin_helper::CreateHandle(
