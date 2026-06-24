@@ -8,13 +8,12 @@
 #include <memory>
 #include <string>
 
-#include "base/memory/raw_ptr.h"
 #include "gin/wrappable.h"
 #include "shell/browser/event_emitter_mixin.h"
 #include "shell/browser/ui/electron_menu_model.h"
 #include "shell/common/gin_helper/constructible.h"
-#include "shell/common/gin_helper/self_keep_alive.h"
 #include "ui/base/mojom/menu_source_type.mojom-forward.h"
+#include "v8/include/cppgc/member.h"
 
 namespace gin {
 class Arguments;
@@ -45,6 +44,7 @@ class Menu : public gin::Wrappable<Menu>,
   static const gin::WrapperInfo kWrapperInfo;
   const gin::WrapperInfo* wrapper_info() const override;
   const char* GetHumanReadableName() const override;
+  void Trace(cppgc::Visitor*) const override;
 
   // gin_helper::Constructible
   static void FillObjectTemplate(v8::Isolate*, v8::Local<v8::ObjectTemplate>);
@@ -61,6 +61,10 @@ class Menu : public gin::Wrappable<Menu>,
   ElectronMenuModel* model() const { return model_.get(); }
 
  protected:
+  // Remove this instance as an observer from the model. Called by derived
+  // class destructors to ensure observer is removed before platform-specific
+  // cleanup that may trigger model callbacks.
+  void RemoveModelObserver();
   // Returns a new callback which keeps references of the JS wrapper until the
   // passed |callback| is called.
   base::OnceClosure BindSelfToClosure(base::OnceClosure callback);
@@ -69,6 +73,11 @@ class Menu : public gin::Wrappable<Menu>,
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   bool IsCommandIdVisible(int command_id) const override;
+  std::u16string GetLabelForCommandId(int command_id) const override;
+  std::u16string GetAccessibilityLabelForCommandId(
+      int command_id) const override;
+  std::u16string GetSecondaryLabelForCommandId(int command_id) const override;
+  ui::ImageModel GetIconForCommandId(int command_id) const override;
   bool ShouldCommandIdWorkWhenHidden(int command_id) const override;
   bool GetAcceleratorForCommandIdWithParams(
       int command_id,
@@ -80,6 +89,7 @@ class Menu : public gin::Wrappable<Menu>,
       int command_id,
       ElectronMenuModel::SharingItem* item) const override;
   v8::Local<v8::Value> GetUserAcceleratorAt(int command_id) const;
+  virtual void SimulateSubmenuCloseSequenceForTesting();
 #endif
   void ExecuteCommand(int command_id, int event_flags) override;
   void OnMenuWillShow(ui::SimpleMenuModel* source) override;
@@ -93,9 +103,6 @@ class Menu : public gin::Wrappable<Menu>,
                        base::OnceClosure callback) = 0;
   virtual void ClosePopupAt(int32_t window_id) = 0;
   virtual std::u16string GetAcceleratorTextAtForTesting(int index) const;
-
-  std::unique_ptr<ElectronMenuModel> model_;
-  raw_ptr<Menu> parent_ = nullptr;
 
   // Observable:
   void OnMenuWillClose() override;
@@ -123,16 +130,9 @@ class Menu : public gin::Wrappable<Menu>,
   void Clear();
   int GetIndexOfCommandId(int command_id) const;
   int GetItemCount() const;
-  int GetCommandIdAt(int index) const;
-  std::u16string GetLabelAt(int index) const;
-  std::u16string GetSublabelAt(int index) const;
-  std::u16string GetToolTipAt(int index) const;
-  bool IsItemCheckedAt(int index) const;
-  bool IsEnabledAt(int index) const;
-  bool IsVisibleAt(int index) const;
-  bool WorksWhenHiddenAt(int index) const;
 
-  gin_helper::SelfKeepAlive<Menu> keep_alive_{this};
+  std::unique_ptr<ElectronMenuModel> model_;
+  cppgc::Member<Menu> parent_;
 };
 
 }  // namespace electron::api

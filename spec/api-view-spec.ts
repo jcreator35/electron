@@ -108,7 +108,9 @@ describe('View', () => {
     it('emits bounds-changed when bounds mutate', () => {
       const v = new View();
       let called = 0;
-      v.once('bounds-changed', () => { called++; });
+      v.once('bounds-changed', () => {
+        called++;
+      });
       v.setBounds({ x: 5, y: 6, width: 7, height: 8 });
       expect(called).to.equal(1);
     });
@@ -132,6 +134,42 @@ describe('View', () => {
       child.setBounds({ x: 10, y: 15, width: 25, height: 30 });
       parent.setBounds({ x: 50, y: 60, width: 500, height: 600 });
       expect(child.getBounds()).to.deep.equal({ x: 10, y: 15, width: 25, height: 30 });
+    });
+
+    it('can set bounds with animation', (done) => {
+      const v = new View();
+      v.setBounds(
+        { x: 0, y: 0, width: 100, height: 100 },
+        {
+          animate: {
+            duration: 300
+          }
+        }
+      );
+      setTimeout(() => {
+        expect(v.getBounds()).to.deep.equal({ x: 0, y: 0, width: 100, height: 100 });
+        done();
+      }, 350);
+    });
+  });
+
+  describe('view.setBackgroundBlur', () => {
+    it('can be set to various values', () => {
+      w = new BaseWindow({ show: false });
+      const v = new View();
+      w.setContentView(v);
+      v.setBackgroundBlur(0);
+      v.setBackgroundBlur(10);
+      v.setBackgroundBlur(-10);
+      v.setBackgroundBlur(100);
+      v.setBackgroundBlur(-100);
+    });
+
+    it('does not throw when set before being added to a window', () => {
+      const v = new View();
+      expect(() => {
+        v.setBackgroundBlur(10);
+      }).to.not.throw();
     });
   });
 });

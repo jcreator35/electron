@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -17,7 +16,6 @@
 #include "shell/browser/background_throttling_source.h"
 #include "shell/browser/browser.h"
 #include "shell/browser/draggable_region_provider.h"
-#include "shell/browser/native_window_features.h"
 #include "shell/browser/ui/drag_util.h"
 #include "shell/browser/window_list.h"
 #include "shell/common/color_util.h"
@@ -30,11 +28,7 @@
 
 #if !BUILDFLAG(IS_MAC)
 #include "shell/browser/ui/views/frameless_view.h"
-#endif
-
-#if BUILDFLAG(IS_WIN)
-#include "ui/display/win/screen_win.h"
-#include "ui/views/views_features.h"
+#include "ui/views/view_utils.h"
 #endif
 
 #if defined(USE_OZONE)
@@ -72,34 +66,11 @@ struct Converter<electron::NativeWindow::TitleBarStyle> {
 
 namespace electron {
 
-namespace {
-
-#if BUILDFLAG(IS_WIN)
-gfx::Size GetExpandedWindowSize(const NativeWindow* window,
-                                bool transparent,
-                                gfx::Size size) {
-  if (!base::FeatureList::IsEnabled(
-          views::features::kEnableTransparentHwndEnlargement) ||
-      !transparent) {
-    return size;
-  }
-
-  gfx::Size min_size = display::win::GetScreenWin()->ScreenToDIPSize(
-      window->GetAcceleratedWidget(), gfx::Size{64, 64});
-
-  // Some AMD drivers can't display windows that are less than 64x64 pixels,
-  // so expand them to be at least that size. http://crbug.com/286609
-  gfx::Size expanded(std::max(size.width(), min_size.width()),
-                     std::max(size.height(), min_size.height()));
-  return expanded;
-}
-#endif
-
-}  // namespace
-
-NativeWindow::NativeWindow(const gin_helper::Dictionary& options,
+NativeWindow::NativeWindow(const int32_t base_window_id,
+                           const gin_helper::Dictionary& options,
                            NativeWindow* parent)
-    : title_bar_style_{options.ValueOrDefault(options::kTitleBarStyle,
+    : base_window_id_{base_window_id},
+      title_bar_style_{options.ValueOrDefault(options::kTitleBarStyle,
                                               TitleBarStyle::kNormal)},
       transparent_{options.ValueOrDefault(options::kTransparent, false)},
       enable_larger_than_screen_{
@@ -109,6 +80,8 @@ NativeWindow::NativeWindow(const gin_helper::Dictionary& options,
       has_frame_{options.ValueOrDefault(options::kFrame, true) &&
                  title_bar_style_ == TitleBarStyle::kNormal},
       parent_{parent} {
+  DCHECK_NE(base_window_id_, 0);
+
 #if BUILDFLAG(IS_WIN)
   options.Get(options::kBackgroundMaterial, &background_material_);
 #elif BUILDFLAG(IS_MAC)
@@ -137,24 +110,10 @@ NativeWindow::~NativeWindow() {
 
 void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
   // Setup window from options.
-  if (int x, y; options.Get(options::kX, &x) && options.Get(options::kY, &y)) {
-    SetPosition(gfx::Point{x, y});
-
-#if BUILDFLAG(IS_WIN)
-    // FIXME(felixrieseberg): Dirty, dirty workaround for
-    // https://github.com/electron/electron/issues/10862
-    // Somehow, we need to call `SetBounds` twice to get
-    // usable results. The root cause is still unknown.
-    SetPosition(gfx::Point{x, y});
-#endif
-  } else if (bool center; options.Get(options::kCenter, &center) && center) {
-    Center();
-  }
-
   const bool use_content_size =
       options.ValueOrDefault(options::kUseContentSize, false);
 
-  // On Linux and Window we may already have maximum size defined.
+  // On Linux and Windows we may already have minimum and maximum size defined.
   extensions::SizeConstraints size_constraints(
       use_content_size ? GetContentSizeConstraints() : GetSizeConstraints());
 
@@ -181,9 +140,31 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
     size_constraints.set_maximum_size(gfx::Size(max_width, max_height));
 
   if (use_content_size) {
+    gfx::Size clamped = size_constraints.ClampSize(GetContentSize());
+    if (clamped != GetContentSize()) {
+      SetContentSize(clamped);
+    }
     SetContentSizeConstraints(size_constraints);
   } else {
+    gfx::Size clamped = size_constraints.ClampSize(GetSize());
+    if (clamped != GetSize()) {
+      SetSize(clamped);
+    }
     SetSizeConstraints(size_constraints);
+  }
+
+  if (int x, y; options.Get(options::kX, &x) && options.Get(options::kY, &y)) {
+    SetPosition(gfx::Point{x, y});
+
+#if BUILDFLAG(IS_WIN)
+    // FIXME(felixrieseberg): Dirty, dirty workaround for
+    // https://github.com/electron/electron/issues/10862
+    // Somehow, we need to call `SetBounds` twice to get
+    // usable results. The root cause is still unknown.
+    SetPosition(gfx::Point{x, y});
+#endif
+  } else if (bool center; options.Get(options::kCenter, &center) && center) {
+    Center();
   }
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
   if (bool val; options.Get(options::kClosable, &val))
@@ -193,8 +174,7 @@ void NativeWindow::InitFromOptions(const gin_helper::Dictionary& options) {
   if (bool val; options.Get(options::kMovable, &val))
     SetMovable(val);
 
-  if (bool val; options.Get(options::kHasShadow, &val))
-    SetHasShadow(val);
+  SetHasShadow(options.ValueOrDefault(options::kHasShadow, true));
 
   if (double val; options.Get(options::kOpacity, &val))
     SetOpacity(val);
@@ -258,6 +238,13 @@ NativeWindow* NativeWindow::FromWidget(const views::Widget* widget) {
 
 void NativeWindow::SetShape(const std::vector<gfx::Rect>& rects) {
   widget()->SetShape(std::make_unique<std::vector<gfx::Rect>>(rects));
+}
+
+void NativeWindow::FlushPendingRootLayout(views::View* view) {
+  view->InvalidateLayout();
+
+  if (views::Widget* widget = view->GetWidget())
+    widget->LayoutRootViewIfNecessary();
 }
 
 bool NativeWindow::IsClosed() const {
@@ -388,15 +375,7 @@ gfx::Size NativeWindow::GetContentMinimumSize() const {
 }
 
 gfx::Size NativeWindow::GetContentMaximumSize() const {
-  const auto size_constraints = GetContentSizeConstraints();
-  gfx::Size maximum_size = size_constraints.GetMaximumSize();
-
-#if BUILDFLAG(IS_WIN)
-  if (size_constraints.HasMaximumSize())
-    maximum_size = GetExpandedWindowSize(this, transparent(), maximum_size);
-#endif
-
-  return maximum_size;
+  return GetContentSizeConstraints().GetMaximumSize();
 }
 
 void NativeWindow::SetSheetOffset(const double offsetX, const double offsetY) {
@@ -624,8 +603,9 @@ void NativeWindow::NotifyWindowLeaveHtmlFullScreen() {
   observers_.Notify(&NativeWindowObserver::OnWindowLeaveHtmlFullScreen);
 }
 
-void NativeWindow::NotifyWindowAlwaysOnTopChanged() {
-  observers_.Notify(&NativeWindowObserver::OnWindowAlwaysOnTopChanged);
+void NativeWindow::NotifyWindowAlwaysOnTopChanged(const bool is_always_on_top) {
+  observers_.Notify(&NativeWindowObserver::OnWindowAlwaysOnTopChanged,
+                    is_always_on_top);
 }
 
 void NativeWindow::NotifyWindowExecuteAppCommand(
@@ -634,7 +614,7 @@ void NativeWindow::NotifyWindowExecuteAppCommand(
 }
 
 void NativeWindow::NotifyTouchBarItemInteraction(const std::string& item_id,
-                                                 base::Value::Dict details) {
+                                                 base::DictValue details) {
   observers_.Notify(&NativeWindowObserver::OnTouchBarItemResult, item_id,
                     details);
 }
@@ -669,11 +649,13 @@ int NativeWindow::NonClientHitTest(const gfx::Point& point) {
 #if !BUILDFLAG(IS_MAC)
   // We need to ensure we account for resizing borders on Windows and Linux.
   if ((!has_frame() || has_client_frame()) && IsResizable()) {
-    auto* frame =
-        static_cast<FramelessView*>(widget()->non_client_view()->frame_view());
-    int border_hit = frame->ResizingBorderHitTest(point);
-    if (border_hit != HTNOWHERE)
-      return border_hit;
+    auto* frame = views::AsViewClass<FramelessView>(
+        widget()->non_client_view()->frame_view());
+    if (frame) {
+      int border_hit = frame->ResizingBorderHitTest(point);
+      if (border_hit != HTNOWHERE)
+        return border_hit;
+    }
   }
 #endif
 
@@ -692,7 +674,7 @@ int NativeWindow::NonClientHitTest(const gfx::Point& point) {
 
 void NativeWindow::AddDraggableRegionProvider(
     DraggableRegionProvider* provider) {
-  if (!base::Contains(draggable_region_providers_, provider)) {
+  if (!std::ranges::contains(draggable_region_providers_, provider)) {
     draggable_region_providers_.push_back(provider);
   }
 }
@@ -800,7 +782,6 @@ bool NativeWindow::PlatformHasClientFrame() {
   // Ozone X11 likes to prefer custom frames,
   // but we don't need them unless on Wayland.
   static const bool has_client_frame =
-      base::FeatureList::IsEnabled(features::kWaylandWindowDecorations) &&
       !ui::OzonePlatform::GetInstance()
            ->GetPlatformRuntimeProperties()
            .supports_server_side_window_decorations;

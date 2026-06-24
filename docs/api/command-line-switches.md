@@ -172,7 +172,7 @@ Enables net log events to be saved and writes them to `path`.
 Sets the verbosity of logging when used together with `--enable-logging`.
 `N` should be one of [Chrome's LogSeverities][severities].
 
-Note that two complimentary logging mechanisms in Chromium -- `LOG()`
+Note that two complementary logging mechanisms in Chromium -- `LOG()`
 and `VLOG()` -- are controlled by different switches. `--log-level`
 controls `LOG()` messages, while `--v` and `--vmodule` control `VLOG()`
 messages. So you may want to use a combination of these three switches
@@ -317,7 +317,18 @@ By default inspector websocket url is available in stderr and under /json/list e
 
 ### `--experimental-network-inspection`
 
-Enable support for devtools network inspector events, for visibility into requests made by the nodejs `http` and `https` modules.
+Enable support for DevTools network inspector events, for visibility into requests made by the nodejs `http` and `https` modules.
+
+### `--experimental-inspector-network-resource`
+
+Enable support for resolving source maps over the network when using the Node.js inspector.
+
+When enabled, DevTools can retrieve remote source maps for main and utility
+process scripts via the Node.js inspector.
+
+**Note:** When enabled, the Node.js inspector will make network requests to
+URLs specified in source maps. Be mindful of this in environments where the
+process has access to internal networks.
 
 ### `--no-deprecation`
 
@@ -354,6 +365,11 @@ Affects the default output directory of [v8.setHeapSnapshotNearHeapLimit](https:
 
 Disable exposition of [Navigator API][] on the global scope from Node.js.
 
+### `--experimental-transform-types`
+
+Enables the [transformation](https://nodejs.org/api/typescript.html#type-stripping)
+of TypeScript-only syntax into JavaScript code.
+
 ## Chromium Flags
 
 There isn't a documented list of all Chromium switches, but there are a few ways to find them.
@@ -369,6 +385,13 @@ A complete list of flags exists in [Chromium's flag metadata page](https://sourc
 Keep in mind that standalone switches can sometimes be split into individual features, so there's no fully complete list of switches.
 
 Finally, you'll need to ensure that the version of Chromium in Electron matches the version of the browser you're using to cross-reference the switches.
+
+### Chromium features relevant to Electron apps
+
+* `AlwaysLogLOAFURL`: enables script attribution for
+  [`long-animation-frame`](https://developer.mozilla.org/en-US/docs/Web/API/Performance_API/Long_animation_frame_timing)
+  `PerformanceObserver` events for non-http(s), non-data, non-blob URLs (such as `file:` or custom
+  protocol URLs).
 
 [app]: app.md
 [append-switch]: command-line.md#commandlineappendswitchswitch-value

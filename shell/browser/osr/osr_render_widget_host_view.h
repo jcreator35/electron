@@ -28,7 +28,7 @@
 #include "shell/browser/osr/osr_video_consumer.h"
 #include "shell/browser/osr/osr_view_proxy.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
-#include "third_party/blink/public/mojom/widget/record_content_to_visible_time_request.mojom-forward.h"
+#include "third_party/blink/public/common/page/content_to_visible_time_request.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/compositor/compositor.h"
@@ -73,6 +73,7 @@ class OffScreenRenderWidgetHostView
       bool transparent,
       bool offscreen_use_shared_texture,
       const std::string& offscreen_shared_texture_pixel_format,
+      float offscreen_device_scale_factor,
       bool painting,
       int frame_rate,
       const OnPaintCallback& callback,
@@ -95,11 +96,9 @@ class OffScreenRenderWidgetHostView
   ui::TextInputClient* GetTextInputClient() override;
   void Focus() override {}
   bool HasFocus() override;
-  uint32_t GetCaptureSequenceNumber() const override;
   bool IsSurfaceAvailableForCopy() override;
   void Hide() override;
   bool IsShowing() override;
-  void EnsureSurfaceSynchronizedForWebTest() override;
   gfx::Rect GetViewBounds() override;
   gfx::Size GetVisibleViewportSize() override;
   void SetInsets(const gfx::Insets&) override {}
@@ -148,9 +147,9 @@ class OffScreenRenderWidgetHostView
   void CopyFromSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
-      base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
-          callback) override;
-  display::ScreenInfo GetScreenInfo() const override;
+      base::TimeDelta timeout,
+      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
+      override;
   void TransformPointToRootSurface(gfx::PointF* point) override {}
   gfx::Rect GetBoundsInRootWindow() override;
   std::optional<content::DisplayFeature> GetDisplayFeature() override;
@@ -158,11 +157,13 @@ class OffScreenRenderWidgetHostView
   void OverrideDisplayFeatureForEmulation(
       const content::DisplayFeature* display_feature) override {}
   void NotifyHostAndDelegateOnWasShown(
-      blink::mojom::RecordContentToVisibleTimeRequestPtr) final;
+      std::optional<blink::RecordContentToVisibleTimeRequest>
+          visible_time_request) final;
   void RequestSuccessfulPresentationTimeFromHostOrDelegate(
-      blink::mojom::RecordContentToVisibleTimeRequestPtr) final;
+      blink::RecordContentToVisibleTimeRequest visible_time_request) final;
   void CancelSuccessfulPresentationTimeRequestForHostAndDelegate() final;
   viz::SurfaceId GetCurrentSurfaceId() const override;
+  bool HasSavedCompositorFrame() const override;
   std::unique_ptr<content::SyntheticGestureTarget>
   CreateSyntheticGestureTarget() override;
   void ImeCompositionRangeChanged(
@@ -170,6 +171,7 @@ class OffScreenRenderWidgetHostView
       const std::optional<std::vector<gfx::Rect>>& character_bounds) override {}
   gfx::Size GetCompositorViewportPixelSize() override;
   ui::Compositor* GetCompositor() override;
+  display::ScreenInfos GetNewScreenInfosForUpdate() override;
 
   content::RenderWidgetHostViewBase* CreateViewForWidget(
       content::RenderWidgetHost*,
@@ -292,6 +294,8 @@ class OffScreenRenderWidgetHostView
   const bool transparent_;
   const bool offscreen_use_shared_texture_;
   const std::string offscreen_shared_texture_pixel_format_;
+  float offscreen_device_scale_factor_;
+
   OnPaintCallback callback_;
   OnPopupPaintCallback parent_callback_;
 
@@ -332,11 +336,6 @@ class OffScreenRenderWidgetHostView
   std::unique_ptr<OffScreenVideoConsumer> video_consumer_;
 
   content::MouseWheelPhaseHandler mouse_wheel_phase_handler_;
-
-  // Latest capture sequence number which is incremented when the caller
-  // requests surfaces be synchronized via
-  // EnsureSurfaceSynchronizedForWebTest().
-  uint32_t latest_capture_sequence_number_ = 0u;
 
   SkColor background_color_ = SkColor();
 

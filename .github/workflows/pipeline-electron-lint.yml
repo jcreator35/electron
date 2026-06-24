@@ -27,7 +27,7 @@ jobs:
     container: ${{ fromJSON(inputs.container) }}
     steps:
     - name: Checkout Electron
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       with:
         path: src/electron
         fetch-depth: 0
@@ -46,36 +46,43 @@ jobs:
       shell: bash
       run: |
         chromium_revision="$(grep -A1 chromium_version src/electron/DEPS | tr -d '\n' | cut -d\' -f4)"
-        gn_version="$(curl -sL "https://chromium.googlesource.com/chromium/src/+/${chromium_revision}/DEPS?format=TEXT" | base64 -d | grep gn_version | head -n1 | cut -d\' -f4)"
+        if [[ ! "$chromium_revision" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+          echo "::error::Invalid chromium_revision: $chromium_revision"
+          exit 1
+        fi
+        gn_version="$(curl -sL "https://raw.githubusercontent.com/chromium/chromium/refs/tags/${chromium_revision}/DEPS" | grep gn_version | head -n1 | cut -d\' -f4)"
 
         cipd ensure -ensure-file - -root . <<-CIPD
         \$ServiceURL https://chrome-infra-packages.appspot.com/
         @Subdir src/buildtools/linux64
         gn/gn/linux-amd64 $gn_version
         CIPD
-
-        buildtools_path="$(pwd)/src/buildtools"
-        echo "CHROMIUM_BUILDTOOLS_PATH=$buildtools_path" >> $GITHUB_ENV
     - name: Download clang-format Binary
       shell: bash
       run: |
         chromium_revision="$(grep -A1 chromium_version src/electron/DEPS | tr -d '\n' | cut -d\' -f4)"
+        if [[ ! "$chromium_revision" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+          echo "::error::Invalid chromium_revision: $chromium_revision"
+          exit 1
+        fi
 
         mkdir -p src/buildtools
-        curl -sL "https://chromium.googlesource.com/chromium/src/+/${chromium_revision}/buildtools/DEPS?format=TEXT" | base64 -d > src/buildtools/DEPS
+        curl -sL "https://raw.githubusercontent.com/chromium/chromium/refs/tags/${chromium_revision}/buildtools/DEPS" > src/buildtools/DEPS
 
         gclient sync --spec="solutions=[{'name':'src/buildtools','url':None,'deps_file':'DEPS','custom_vars':{'process_deps':True},'managed':False}]"
-    - name: Add ESLint problem matcher
+    - name: Add problem matchers
       shell: bash
-      run: echo "::add-matcher::src/electron/.github/problem-matchers/eslint-stylish.json"
+      run: |
+        echo "::add-matcher::src/electron/.github/problem-matchers/markdownlint.json"
     - name: Run Lint
       shell: bash
       run: |
         # gn.py tries to find a gclient root folder starting from the current dir.
         # When it fails and returns "None" path, the whole script fails. Let's "fix" it.
         touch .gclient
-        # Another option would be to checkout "buildtools" inside the Electron checkout,
-        # but then we would lint its contents (at least gn format), and it doesn't pass it.
+
+        # Clean things up so `depot_tools/gclient_paths.py` finds src/buildtools properly
+        rm -f .gclient_entries
 
         cd src/electron
         node script/yarn.js install --immutable
@@ -85,4 +92,8 @@ jobs:
       run: |
         cd src/electron
         node script/yarn.js tsc -p tsconfig.script.json
-    
+    - name: Check GHA Workflows
+      shell: bash
+      run: |
+        cd src/electron
+        node script/copy-pipeline-segment-publish.js --check

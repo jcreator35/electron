@@ -57,9 +57,15 @@ class PrintViewManagerElectron
   void ScriptedPrint(printing::mojom::ScriptedPrintParamsPtr params,
                      ScriptedPrintCallback callback) override;
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+  void SetAccessibilityTree(
+      int32_t cookie,
+      const ui::AXTreeUpdate& accessibility_tree) override;
+  void GetPrintPreviewParams(GetPrintPreviewParamsCallback callback) override;
+  void UpdatePrintSettings(base::DictValue job_settings,
+                           UpdatePrintSettingsCallback callback) override;
   void SetupScriptedPrintPreview(
       SetupScriptedPrintPreviewCallback callback) override;
-  void ShowScriptedPrintPreview(bool source_is_modifiable) override;
+  void ShowScriptedPrintPreview() override;
   void RequestPrintPreview(
       printing::mojom::RequestPrintPreviewParamsPtr params) override;
   void CheckForCancel(int32_t preview_ui_id,

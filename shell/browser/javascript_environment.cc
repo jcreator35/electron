@@ -17,12 +17,17 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/initialization_util.h"
 #include "gin/array_buffer.h"
+#include "gin/public/isolate_holder.h"
 #include "gin/v8_initializer.h"
 #include "shell/browser/microtasks_runner.h"
 #include "shell/common/gin_helper/cleaned_up_at_exit.h"
 #include "shell/common/node_includes.h"
+#include "shell/common/process_util.h"
 #include "third_party/blink/public/common/switches.h"
+#include "third_party/electron_node/src/node_snapshot_builder.h"
 #include "third_party/electron_node/src/node_wasm_web_api.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-locker.h"
 
 namespace {
 v8::Isolate* g_isolate;
@@ -31,6 +36,26 @@ v8::Isolate* g_isolate;
 namespace electron {
 
 namespace {
+
+// The Node startup snapshot a JavascriptEnvironment's isolate is created
+// from, when one is embedded and this process is allowed to consume it.
+// The snapshot was built by extending the same snapshot_blob.bin the rest
+// of the process's V8 uses, so the read-only heap is shared (V8's
+// shared-RO-heap requirement). Browser-process-only: the renderer's isolate
+// must use the blink v8_context_snapshot, and the utility-process node
+// service does its own thing.
+const node::SnapshotData* NodeSnapshotForThisProcess() {
+  if (!electron::IsBrowserProcess())
+    return nullptr;
+  // The ELECTRON_RUN_AS_NODE entry point (shell/app/node_main.cc) runs without
+  // a process type, so IsBrowserProcess() is true for it too -- but it boots
+  // Node directly and builds its IsolateData without snapshot_data, so handing
+  // it a snapshot-backed isolate would trip node::CreateEnvironment's
+  // snapshot_data CHECK. It isn't the app-start path this targets; skip it.
+  if (electron::IsRunningAsNode())
+    return nullptr;
+  return node::SnapshotBuilder::GetEmbeddedSnapshotData();
+}
 
 std::unique_ptr<gin::IsolateHolder> CreateIsolateHolder(
     v8::Isolate* isolate,
@@ -42,6 +67,12 @@ std::unique_ptr<gin::IsolateHolder> CreateIsolateHolder(
   // --heapsnapshot-near-heap-limit=max_count.
   *max_young_generation_size =
       create_params->constraints.max_young_generation_size_in_bytes();
+  // Electron: create the browser-process isolate from the embedded Node
+  // startup snapshot when one is present, so the Node bootstrap is
+  // deserialized instead of recompiled at app start.
+  if (const node::SnapshotData* sd = NodeSnapshotForThisProcess()) {
+    node::SnapshotBuilder::InitializeIsolateParams(sd, create_params.get());
+  }
   // Align behavior with V8 Isolate default for Node.js.
   // This is necessary for important aspects of Node.js
   // including heap and cpu profilers to function properly.
@@ -58,15 +89,22 @@ std::unique_ptr<gin::IsolateHolder> CreateIsolateHolder(
 
 JavascriptEnvironment::JavascriptEnvironment(uv_loop_t* event_loop,
                                              bool setup_wasm_streaming)
-    : isolate_holder_{CreateIsolateHolder(
-          Initialize(event_loop, setup_wasm_streaming),
-          &max_young_generation_size_)},
-      isolate_{isolate_holder_->isolate()},
-      locker_{std::make_unique<v8::Locker>(isolate_)} {
-  isolate_->Enter();
+    : isolate_holder_{
+          CreateIsolateHolder(Initialize(event_loop, setup_wasm_streaming),
+                              &max_young_generation_size_)},
+      locker_{std::in_place, isolate()} {
+  v8::Isolate* const isolate = this->isolate();
+  isolate->Enter();
 
-  v8::HandleScope scope(isolate_);
-  auto context = node::NewContext(isolate_);
+  // Electron: when consuming the embedded Node startup snapshot, the main
+  // context is materialized from the snapshot inside node::CreateEnvironment
+  // (Context::FromSnapshot) and entered in electron_browser_main_parts.cc
+  // after that. Creating a fresh node::NewContext here would be wasted work.
+  if (NodeSnapshotForThisProcess() != nullptr)
+    return;
+
+  v8::HandleScope scope{isolate};
+  auto context = node::NewContext(isolate);
   CHECK(!context.IsEmpty());
 
   context->Enter();
@@ -74,21 +112,23 @@ JavascriptEnvironment::JavascriptEnvironment(uv_loop_t* event_loop,
 
 JavascriptEnvironment::~JavascriptEnvironment() {
   DCHECK_NE(platform_, nullptr);
+  v8::Isolate* isolate = this->isolate();
 
   {
-    v8::HandleScope scope(isolate_);
-    isolate_->GetCurrentContext()->Exit();
+    v8::HandleScope scope{isolate};
+    isolate->GetCurrentContext()->Exit();
   }
-  isolate_->Exit();
+  isolate->Exit();
   g_isolate = nullptr;
 
   // Deinit gin::IsolateHolder prior to calling NodePlatform::UnregisterIsolate.
   // Otherwise cppgc::internal::Sweeper::Start will try to request a task runner
   // from the NodePlatform with an already unregistered isolate.
   locker_.reset();
+  DCHECK(!microtasks_runner_);
   isolate_holder_.reset();
 
-  platform_->UnregisterIsolate(isolate_);
+  platform_->UnregisterIsolate(isolate);
 }
 
 v8::Isolate* JavascriptEnvironment::Initialize(uv_loop_t* event_loop,
@@ -106,7 +146,7 @@ v8::Isolate* JavascriptEnvironment::Initialize(uv_loop_t* event_loop,
   node::tracing::TraceEventHelper::SetAgent(tracing_agent);
   platform_ = node::MultiIsolatePlatform::Create(
       base::RecommendedMaxNumberOfThreadsInThreadGroup(3, 8, 0.1, 0),
-      tracing_controller, gin::V8Platform::GetCurrentPageAllocator());
+      tracing_controller, gin::V8Platform::Get()->GetPageAllocator());
 
   v8::V8::InitializePlatform(platform_.get());
   gin::IsolateHolder::Initialize(
@@ -135,6 +175,10 @@ v8::Isolate* JavascriptEnvironment::Initialize(uv_loop_t* event_loop,
   return isolate;
 }
 
+v8::Isolate* JavascriptEnvironment::isolate() const {
+  return isolate_holder_->isolate();
+}
+
 // static
 v8::Isolate* JavascriptEnvironment::GetIsolate() {
   CHECK(g_isolate);
@@ -155,10 +199,11 @@ void JavascriptEnvironment::DestroyMicrotasksRunner() {
   // parameters.
   isolate_holder_->WillDestroyMicrotasksRunner();
   {
-    v8::HandleScope scope(isolate_);
+    v8::HandleScope scope{isolate()};
     gin_helper::CleanedUpAtExit::DoCleanup();
   }
   base::CurrentThread::Get()->RemoveTaskObserver(microtasks_runner_.get());
+  microtasks_runner_.reset();
 }
 
 }  // namespace electron

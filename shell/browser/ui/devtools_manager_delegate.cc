@@ -105,7 +105,8 @@ void DevToolsManagerDelegate::HandleCommand(
     content::DevToolsAgentHostClientChannel* channel,
     base::span<const uint8_t> message,
     NotHandledCallback callback) {
-  crdtp::Dispatchable dispatchable(crdtp::SpanFrom(message));
+  crdtp::Dispatchable dispatchable(crdtp::SpanFrom(message), std::string_view(),
+                                   crdtp::FallthroughCallback());
   DCHECK(dispatchable.ok());
   if (crdtp::SpanEquals(crdtp::SpanFrom(kBrowserCloseMethod),
                         dispatchable.Method())) {
@@ -135,6 +136,10 @@ std::string DevToolsManagerDelegate::GetDiscoveryPageHTML() {
 }
 
 bool DevToolsManagerDelegate::HasBundledFrontendResources() {
+  return true;
+}
+
+bool DevToolsManagerDelegate::ShouldUseBundledFrontendResources() {
   return true;
 }
 

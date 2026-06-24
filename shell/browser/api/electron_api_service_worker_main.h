@@ -5,13 +5,14 @@
 #ifndef ELECTRON_SHELL_BROWSER_API_ELECTRON_API_SERVICE_WORKER_MAIN_H_
 #define ELECTRON_SHELL_BROWSER_API_ELECTRON_API_SERVICE_WORKER_MAIN_H_
 
+#include <compare>
+#include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
-#include "base/process/process.h"
-#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/service_worker_version_base_info.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -23,10 +24,6 @@
 #include "third_party/blink/public/common/service_worker/embedded_worker_status.h"
 
 class GURL;
-
-namespace content {
-class StoragePartition;
-}
 
 namespace gin {
 class Arguments;
@@ -42,41 +39,21 @@ class Promise;
 
 namespace electron::api {
 
-// Key to uniquely identify a ServiceWorkerMain by its Version ID within the
-// associated StoragePartition.
+// Key to uniquely identify a ServiceWorkerMain by its
+// BrowserContext ID, the StoragePartition key, and version id.
 struct ServiceWorkerKey {
+  std::string browser_context_id;
+  content::StoragePartitionConfig storage_partition_config;
   int64_t version_id;
-  raw_ptr<const content::StoragePartition> storage_partition;
-
-  ServiceWorkerKey(int64_t id, const content::StoragePartition* partition)
-      : version_id(id), storage_partition(partition) {}
-
-  bool operator<(const ServiceWorkerKey& other) const {
-    return std::tie(version_id, storage_partition) <
-           std::tie(other.version_id, other.storage_partition);
-  }
-
-  bool operator==(const ServiceWorkerKey& other) const {
-    return version_id == other.version_id &&
-           storage_partition == other.storage_partition;
-  }
-
-  struct Hasher {
-    std::size_t operator()(const ServiceWorkerKey& key) const {
-      return std::hash<const content::StoragePartition*>()(
-                 key.storage_partition) ^
-             std::hash<int64_t>()(key.version_id);
-    }
-  };
+  auto operator<=>(const ServiceWorkerKey&) const = default;
 };
 
 // Creates a wrapper to align with the lifecycle of the non-public
 // content::ServiceWorkerVersion. Object instances are pinned for the lifetime
 // of the underlying SW such that registered IPC handlers continue to dispatch.
 //
-// Instances are uniquely identified by pairing their version ID and the
-// StoragePartition in which they're registered. In Electron, this is always
-// the default StoragePartition for the associated BrowserContext.
+// Instances are uniquely identified by pairing their version ID with the
+// BrowserContext and StoragePartition in which they're registered.
 class ServiceWorkerMain final
     : public gin_helper::DeprecatedWrappable<ServiceWorkerMain>,
       public gin_helper::Pinnable<ServiceWorkerMain>,
@@ -88,11 +65,13 @@ class ServiceWorkerMain final
   static gin_helper::Handle<ServiceWorkerMain> From(
       v8::Isolate* isolate,
       content::ServiceWorkerContext* sw_context,
-      const content::StoragePartition* storage_partition,
+      std::string browser_context_id,
+      content::StoragePartitionConfig storage_partition_config,
       int64_t version_id);
   static ServiceWorkerMain* FromVersionID(
-      int64_t version_id,
-      const content::StoragePartition* storage_partition);
+      std::string browser_context_id,
+      content::StoragePartitionConfig storage_partition_config,
+      int64_t version_id);
 
   // gin_helper::Constructible
   static void FillObjectTemplate(v8::Isolate*, v8::Local<v8::ObjectTemplate>);
@@ -112,7 +91,7 @@ class ServiceWorkerMain final
  protected:
   explicit ServiceWorkerMain(content::ServiceWorkerContext* sw_context,
                              int64_t version_id,
-                             const ServiceWorkerKey& key);
+                             ServiceWorkerKey key);
   ~ServiceWorkerMain() override;
 
  private:
@@ -137,7 +116,7 @@ class ServiceWorkerMain final
 
   void InvalidateVersionInfo();
   const content::ServiceWorkerVersionBaseInfo* version_info() const {
-    return version_info_.get();
+    return version_info_ ? &*version_info_ : nullptr;
   }
 
   bool IsDestroyed() const;
@@ -146,11 +125,12 @@ class ServiceWorkerMain final
   GURL ScopeURL() const;
   GURL ScriptURL() const;
 
-  // Version ID unique only to the StoragePartition.
-  int64_t version_id_;
+  // Version ID assigned by the service worker storage.
+  const int64_t version_id_;
 
-  // Unique identifier pairing the Version ID and StoragePartition.
-  ServiceWorkerKey key_;
+  // Unique identifier pairing the Version ID, BrowserContext, and
+  // StoragePartition.
+  const ServiceWorkerKey key_;
 
   // Whether the Service Worker version has been destroyed.
   bool version_destroyed_ = false;
@@ -159,12 +139,10 @@ class ServiceWorkerMain final
   bool redundant_ = false;
 
   // Store copy of version info so it's accessible when not running.
-  std::unique_ptr<content::ServiceWorkerVersionBaseInfo> version_info_;
+  std::optional<content::ServiceWorkerVersionBaseInfo> version_info_;
 
   raw_ptr<content::ServiceWorkerContext> service_worker_context_;
   mojo::AssociatedRemote<mojom::ElectronRenderer> remote_;
-
-  std::unique_ptr<gin_helper::Promise<void>> start_worker_promise_;
 };
 
 }  // namespace electron::api

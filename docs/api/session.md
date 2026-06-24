@@ -629,6 +629,54 @@ Emitted after `USBDevice.forget()` has been called.  This event can be used
 to help maintain persistent storage of permissions when
 `setDevicePermissionHandler` is used.
 
+#### Event: 'select-webauthn-account'
+
+Returns:
+
+* `event` Event
+* `details` Object
+  * `relyingPartyId` string - The relying party identifier from the WebAuthn request.
+  * `accounts` [WebAuthnAccount[]](structures/webauthn-account.md)
+  * `frame` [WebFrameMain](web-frame-main.md) | null - The frame initiating this event.
+      May be `null` if accessed after the frame has either navigated or been destroyed.
+* `callback` Function
+  * `credentialId` string | null (optional)
+
+Emitted when a call to `navigator.credentials.get()` resolves multiple
+discoverable WebAuthn credentials and the user must choose one. `callback`
+should be called with the `credentialId` of the selected account; passing no
+arguments — or a `credentialId` that does not match one of the provided
+accounts — will cancel the request and the page will receive a
+`NotAllowedError`. If no listener is registered for this event, the request is
+cancelled with the same error. The credential request remains pending until
+the listener invokes the callback, so always invoke it exactly once — typically
+from a `try { … } finally { callback(…) }` block.
+
+On macOS, the Touch ID platform authenticator surfaces accounts via this event
+once it has been configured with
+[`app.configureWebAuthn`](app.md#appconfigurewebauthnoptions-macos). The event
+may also fire on other platforms when a roaming FIDO2 authenticator returns
+multiple discoverable credentials.
+
+```js
+const { app, BrowserWindow } = require('electron')
+
+let win = null
+
+app.whenReady().then(() => {
+  app.configureWebAuthn({
+    touchID: { keychainAccessGroup: 'A1B2C3D4E5.com.example.app.webauthn' }
+  })
+
+  win = new BrowserWindow()
+
+  win.webContents.session.on('select-webauthn-account', (event, details, callback) => {
+    const selected = details.accounts.find((a) => a.name === 'alice@example.com')
+    callback(selected?.credentialId)
+  })
+})
+```
+
 ### Instance Methods
 
 The following methods are available on instances of `Session`:
@@ -650,10 +698,8 @@ Clears the session’s HTTP cache.
     `scheme://host:port`.
   * `storages` string[] (optional) - The types of storages to clear, can be
     `cookies`, `filesystem`, `indexdb`, `localstorage`,
-    `shadercache`, `websql`, `serviceworkers`, `cachestorage`. If not
+    `shadercache`, `serviceworkers`, `cachestorage`. If not
     specified, clear all storage types.
-  * `quotas` string[] (optional) - The types of quotas to clear, can be
-    `temporary`. If not specified, clear all quotas.
 
 Returns `Promise<void>` - resolves when the storage data has been cleared.
 
@@ -1216,7 +1262,7 @@ function createWindow () {
 
   mainWindow.webContents.session.setBluetoothPairingHandler((details, callback) => {
     bluetoothPinCallback = callback
-    // Send a IPC message to the renderer to prompt the user to confirm the pairing.
+    // Send an IPC message to the renderer to prompt the user to confirm the pairing.
     // Note that this will require logic in the renderer to handle this message and
     // display a prompt to the user.
     mainWindow.webContents.send('bluetooth-pairing-request', details)
@@ -1264,7 +1310,7 @@ session.defaultSession.allowNTLMCredentialsForDomains('*')
 
 Overrides the `userAgent` and `acceptLanguages` for this session.
 
-The `acceptLanguages` must a comma separated ordered list of language codes, for
+The `acceptLanguages` must be a comma separated ordered list of language codes, for
 example `"en-US,fr,de,ko,zh-CN,ja"`.
 
 This doesn't affect existing `WebContents`, and each `WebContents` can use
@@ -1512,7 +1558,7 @@ will not work on non-persistent (in-memory) sessions.
 * `options` Object (optional)
   * `allowFileAccess` boolean - Whether to allow the extension to read local files over `file://`
     protocol and inject content scripts into `file://` pages. This is required e.g. for loading
-    devtools extensions on `file://` URLs. Defaults to false.
+    DevTools extensions on `file://` URLs. Defaults to false.
 
 Returns `Promise<Extension>` - resolves when the extension is loaded.
 
@@ -1538,7 +1584,7 @@ const path = require('node:path')
 app.whenReady().then(async () => {
   await session.defaultSession.loadExtension(
     path.join(__dirname, 'react-devtools'),
-    // allowFileAccess is required to load the devtools extension on file:// URLs.
+    // allowFileAccess is required to load the DevTools extension on file:// URLs.
     { allowFileAccess: true }
   )
   // Note that in order to use the React DevTools extension, you'll need to

@@ -4,16 +4,18 @@
 
 #include "shell/browser/printing/print_view_manager_electron.h"
 
+#include <algorithm>
 #include <utility>
 
-#include "base/containers/contains.h"
 #include "base/functional/bind.h"
+#include "base/logging.h"
 #include "components/printing/browser/print_to_pdf/pdf_print_utils.h"
 #include "printing/mojom/print.mojom.h"
 #include "printing/page_range.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#include "components/printing/browser/print_composite_client.h"
 #include "mojo/public/cpp/bindings/message.h"
 #endif
 
@@ -98,7 +100,7 @@ void PrintViewManagerElectron::GetDefaultPrintSettings(
 void PrintViewManagerElectron::ScriptedPrint(
     printing::mojom::ScriptedPrintParamsPtr params,
     ScriptedPrintCallback callback) {
-  if (!base::Contains(pdf_jobs_, params->cookie)) {
+  if (!std::ranges::contains(pdf_jobs_, params->cookie)) {
     PrintViewManagerBase::ScriptedPrint(std::move(params), std::move(callback));
     return;
   }
@@ -110,13 +112,33 @@ void PrintViewManagerElectron::ScriptedPrint(
 }
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+void PrintViewManagerElectron::SetAccessibilityTree(
+    int32_t cookie,
+    const ui::AXTreeUpdate& accessibility_tree) {
+  auto* client =
+      printing::PrintCompositeClient::FromWebContents(web_contents());
+  if (client) {
+    client->SetAccessibilityTree(cookie, accessibility_tree);
+  }
+}
+
+void PrintViewManagerElectron::GetPrintPreviewParams(
+    GetPrintPreviewParamsCallback callback) {
+  std::move(callback).Run(nullptr);
+}
+
+void PrintViewManagerElectron::UpdatePrintSettings(
+    base::DictValue job_settings,
+    UpdatePrintSettingsCallback callback) {
+  std::move(callback).Run(nullptr);
+}
+
 void PrintViewManagerElectron::SetupScriptedPrintPreview(
     SetupScriptedPrintPreviewCallback callback) {
   mojo::ReportBadMessage(kInvalidSetupScriptedPrintPreviewCall);
 }
 
-void PrintViewManagerElectron::ShowScriptedPrintPreview(
-    bool source_is_modifiable) {
+void PrintViewManagerElectron::ShowScriptedPrintPreview() {
   mojo::ReportBadMessage(kInvalidShowScriptedPrintPreviewCall);
 }
 
@@ -134,7 +156,7 @@ void PrintViewManagerElectron::CheckForCancel(int32_t preview_ui_id,
 
 void PrintViewManagerElectron::DidGetPrintedPagesCount(int32_t cookie,
                                                        uint32_t number_pages) {
-  if (!base::Contains(pdf_jobs_, cookie)) {
+  if (!std::ranges::contains(pdf_jobs_, cookie)) {
     PrintViewManagerBase::DidGetPrintedPagesCount(cookie, number_pages);
   }
 }

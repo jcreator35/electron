@@ -30,6 +30,7 @@ class FilePath;
 
 namespace content {
 class ClientCertificateDelegate;
+class NavigationHandle;
 class PlatformNotificationService;
 class NavigationThrottleRegistry;
 class QuotaPermissionContext;
@@ -82,6 +83,14 @@ class ElectronBrowserClient : public content::ContentBrowserClient,
   // content::ContentBrowserClient:
   std::string GetApplicationLocale() override;
   bool ShouldEnableStrictSiteIsolation() override;
+  bool ShouldEnableSubframeZoom() override;
+#if BUILDFLAG(ENABLE_PDF_VIEWER)
+  std::optional<network::CrossOriginEmbedderPolicy>
+  MaybeOverrideLocalURLCrossOriginEmbedderPolicy(
+      content::NavigationHandle* navigation_handle) override;
+#endif  // BUILDFLAG(ENABLE_PDF_VIEWER)
+  bool DoesSiteRequireDedicatedProcess(content::BrowserContext* browser_context,
+                                       const GURL& effective_site_url) override;
   void BindHostReceiverForRenderer(
       content::RenderProcessHost* render_process_host,
       mojo::GenericPendingReceiver receiver) override;
@@ -103,6 +112,8 @@ class ElectronBrowserClient : public content::ContentBrowserClient,
       int child_process_id,
       content::PosixFileDescriptorInfo* mappings) override;
 #endif
+  bool IsFullscreenAllowedForUnfocusedWebContents(
+      content::WebContents* unfocused_web_contents) override;
 
   std::string GetUserAgent() override;
   void SetUserAgent(const std::string& user_agent);
@@ -116,8 +127,14 @@ class ElectronBrowserClient : public content::ContentBrowserClient,
   content::UsbDelegate* GetUsbDelegate() override;
 
   content::WebAuthenticationDelegate* GetWebAuthenticationDelegate() override;
+#if !BUILDFLAG(IS_ANDROID)
+  std::unique_ptr<content::AuthenticatorRequestClientDelegate>
+  GetWebAuthenticationRequestDelegate(
+      content::RenderFrameHost* render_frame_host) override;
+#endif
 
 #if BUILDFLAG(IS_MAC)
+  std::string GetChildProcessSuffix(int child_flags) override;
   device::GeolocationSystemPermissionManager*
   GetGeolocationSystemPermissionManager() override;
 #endif
@@ -175,6 +192,12 @@ class ElectronBrowserClient : public content::ContentBrowserClient,
                        bool user_gesture,
                        bool opener_suppressed,
                        bool* no_javascript_access) override;
+  std::optional<mojo_base::BigBuffer> GetExtraCreateNewWindowReplyData(
+      content::RenderFrameHost* new_window_main_frame,
+      const GURL& target_url) override;
+  std::optional<mojo_base::BigBuffer> GetServiceWorkerStartupData(
+      content::BrowserContext* browser_context,
+      const GURL& scope) override;
   std::unique_ptr<content::VideoOverlayWindow>
   CreateWindowForVideoPictureInPicture(
       content::VideoPictureInPictureWindowController* controller) override;
@@ -206,12 +229,15 @@ class ElectronBrowserClient : public content::ContentBrowserClient,
       network::mojom::NetworkService* network_service) override;
   std::vector<base::FilePath> GetNetworkContextsParentDirectory() override;
   std::string GetProduct() override;
+  std::unique_ptr<content::TracingDelegate> CreateTracingDelegate() override;
   mojo::PendingRemote<network::mojom::URLLoaderFactory>
   CreateNonNetworkNavigationURLLoaderFactory(
       const std::string& scheme,
       content::FrameTreeNodeId frame_tree_node_id) override;
   void RegisterNonNetworkWorkerMainResourceURLLoaderFactories(
       content::BrowserContext* browser_context,
+      const std::optional<url::Origin>& request_initiator,
+      network::mojom::RequestDestination request_destination,
       NonNetworkURLLoaderFactoryMap* factories) override;
   void RegisterNonNetworkSubresourceURLLoaderFactories(
       int render_process_id,
@@ -255,8 +281,8 @@ class ElectronBrowserClient : public content::ContentBrowserClient,
       bool force_no_https_upgrade,
       scoped_refptr<base::SequencedTaskRunner> navigation_response_task_runner)
       override;
-  bool ShouldTreatURLSchemeAsFirstPartyWhenTopLevel(
-      std::string_view scheme,
+  bool ShouldTreatAsFirstPartyWhenTopLevel(
+      const url::Origin& top_frame_origin,
       bool is_embedded_origin_secure) override;
   void OverrideURLLoaderFactoryParams(
       content::BrowserContext* browser_context,
@@ -311,10 +337,12 @@ class ElectronBrowserClient : public content::ContentBrowserClient,
       std::optional<int64_t> navigation_id) override;
   base::flat_set<std::string> GetPluginMimeTypesWithExternalHandlers(
       content::BrowserContext* browser_context) override;
-  bool IsSuitableHost(content::RenderProcessHost* process_host,
-                      const GURL& site_url) override;
-  bool ShouldUseProcessPerSite(content::BrowserContext* browser_context,
-                               const GURL& effective_url) override;
+  bool IsSuitableHost(
+      content::RenderProcessHost* process_host,
+      const content::SecurityPrincipal& security_principal) override;
+  bool ShouldUseProcessPerSite(
+      content::BrowserContext* browser_context,
+      const content::SecurityPrincipal& security_principal) override;
   void GetMediaDeviceIDSalt(
       content::RenderFrameHost* rfh,
       const net::SiteForCookies& site_for_cookies,

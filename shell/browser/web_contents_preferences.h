@@ -34,6 +34,14 @@ class WebContentsPreferences
   // Get self from WebContents.
   static WebContentsPreferences* From(content::WebContents* web_contents);
 
+  // Whether |web_contents| runs a sandboxed renderer. A WebContents that
+  // never went through a BrowserWindow/webContents constructor (extension
+  // pages, devtools) has no WebContentsPreferences but still runs the
+  // sandboxed renderer (the default since Electron 20), so a null prefs
+  // counts as sandboxed. app.enableSandbox() / --enable-sandbox forces every
+  // renderer sandboxed regardless of per-WC webPreferences.
+  static bool ShouldUseSandbox(content::WebContents* web_contents);
+
   WebContentsPreferences(content::WebContents* web_contents,
                          const gin_helper::Dictionary& web_preferences);
   ~WebContentsPreferences() override;
@@ -78,6 +86,7 @@ class WebContentsPreferences
   bool ShouldDisablePopups() const { return disable_popups_; }
   bool IsWebSecurityEnabled() const { return web_security_; }
   std::optional<base::FilePath> GetPreloadPath() const { return preload_path_; }
+  bool ShouldFocusOnNavigation() const { return focus_on_navigation_; }
   bool IsSandboxed() const;
 
  private:
@@ -121,7 +130,6 @@ class WebContentsPreferences
   std::optional<std::string> default_encoding_;
   bool is_webview_;
   std::vector<std::string> custom_args_;
-  std::vector<std::string> custom_switches_;
   std::optional<std::string> enable_blink_features_;
   std::optional<std::string> disable_blink_features_;
   bool disable_popups_;
@@ -134,6 +142,7 @@ class WebContentsPreferences
   std::optional<base::FilePath> preload_path_;
   blink::mojom::V8CacheOptions v8_cache_options_;
   bool deprecated_paste_enabled_ = false;
+  bool focus_on_navigation_;
 
 #if BUILDFLAG(IS_MAC)
   bool scroll_bounce_;

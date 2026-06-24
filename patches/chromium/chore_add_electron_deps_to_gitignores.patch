@@ -6,7 +6,7 @@ Subject: chore: add electron deps to gitignores
 Makes things like "git status" quicker when developing electron locally
 
 diff --git a/.gitignore b/.gitignore
-index e3b01b0a2b878681a861f76cb10f5b40bbc29a3d..277b05e37dadfd32fbcbbe1e596508aafd4313ba 100644
+index 514ce1b2cf041fe612891c4a5e382345ac29c2f6..a33574996387d84f8ee80eae7d984fc72dcd5e15 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -228,6 +228,7 @@ vs-chromium-project.txt
@@ -18,7 +18,7 @@ index e3b01b0a2b878681a861f76cb10f5b40bbc29a3d..277b05e37dadfd32fbcbbe1e596508aa
  /google_apis/gcm/gcm.xml
  /googleurl
 diff --git a/third_party/.gitignore b/third_party/.gitignore
-index b5761637e4b91efb38b5c1d4be9f59b271d4f0db..010c4f7bfe4ea8c82eff4924c83668c271b834fd 100644
+index ee2f1c9b3c86e5b17790166d3633e4e3aa609073..a3efe2afcb5af64b6dc54c779a70139eb79cf894 100644
 --- a/third_party/.gitignore
 +++ b/third_party/.gitignore
 @@ -45,7 +45,9 @@
@@ -31,7 +31,7 @@ index b5761637e4b91efb38b5c1d4be9f59b271d4f0db..010c4f7bfe4ea8c82eff4924c83668c2
  /espresso/lib/
  /eyesfree/src
  /fast_float/src
-@@ -94,6 +96,7 @@
+@@ -93,6 +95,7 @@
  /mocha
  /mockito/src
  /nacl_sdk_binaries/
@@ -39,7 +39,7 @@ index b5761637e4b91efb38b5c1d4be9f59b271d4f0db..010c4f7bfe4ea8c82eff4924c83668c2
  /ninja
  /node/*.tar.gz
  /node/linux/
-@@ -139,7 +142,7 @@
+@@ -138,7 +141,7 @@
  /spirv-cross/src
  /spirv-headers/src
  /spirv-tools/src

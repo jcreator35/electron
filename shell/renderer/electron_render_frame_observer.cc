@@ -7,7 +7,7 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/renderer/render_frame.h"
-#include "net/base/net_module.h"
+#include "net/base/module/net_module.h"
 #include "net/grit/net_resources.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "shell/common/api/api.mojom.h"
@@ -170,7 +170,7 @@ void ElectronRenderFrameObserver::CreateIsolatedWorldContext() {
   // This maps to the name shown in the context combo box in the Console tab
   // of the dev tools.
   info.human_readable_name =
-      blink::WebString::FromUTF8("Electron Isolated Context");
+      blink::WebString::FromUtf8("Electron Isolated Context");
   // Setup document's origin policy in isolated world
   info.security_origin = frame->GetDocument().GetSecurityOrigin();
   blink::SetIsolatedWorldInfo(WorldIDs::ISOLATED_WORLD_ID, info);

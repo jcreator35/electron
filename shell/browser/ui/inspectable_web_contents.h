@@ -19,6 +19,7 @@
 #include "chrome/browser/devtools/devtools_embedder_message_dispatcher.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_frontend_host.h"
+#include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "electron/buildflags/buildflags.h"
@@ -37,6 +38,7 @@ class InspectableWebContents
     : public content::DevToolsAgentHostClient,
       private content::WebContentsObserver,
       public content::WebContentsDelegate,
+      private content::JavaScriptDialogManager,
       public DevToolsEmbedderMessageDispatcher::Delegate {
  public:
   static void RegisterPrefs(PrefRegistrySimple* pref_registry);
@@ -195,12 +197,14 @@ class InspectableWebContents
                         const std::string& request) override {}
   void RegisterAidaClientEvent(DispatchCallback callback,
                                const std::string& request) override {}
+  void SetChromeFlag(const std::string& flag_name, bool value) override {}
   void DispatchHttpRequest(
       DispatchCallback callback,
       const DevToolsDispatchHttpRequestParams& params) override {}
+  void RequestRestart() override {}
 
   // content::DevToolsFrontendHostDelegate:
-  void HandleMessageFromDevToolsFrontend(base::Value::Dict message);
+  void HandleMessageFromDevToolsFrontend(base::DictValue message);
 
   // content::DevToolsAgentHostClient:
   void DispatchProtocolMessage(content::DevToolsAgentHost* agent_host,
@@ -221,6 +225,11 @@ class InspectableWebContents
   // content::WebContentsDelegate:
   bool HandleKeyboardEvent(content::WebContents*,
                            const input::NativeWebKeyboardEvent&) override;
+  bool DidAddMessageToConsole(content::WebContents* source,
+                              blink::mojom::ConsoleMessageLevel log_level,
+                              const std::u16string& message,
+                              int32_t line_no,
+                              const std::u16string& source_id) override;
   void CloseContents(content::WebContents* source) override;
   std::unique_ptr<content::EyeDropper> OpenEyeDropper(
       content::RenderFrameHost* frame,
@@ -231,6 +240,25 @@ class InspectableWebContents
   void EnumerateDirectory(content::WebContents* source,
                           scoped_refptr<content::FileSelectListener> listener,
                           const base::FilePath& path) override;
+  bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
+                         const content::ContextMenuParams& params) override;
+  content::JavaScriptDialogManager* GetJavaScriptDialogManager(
+      content::WebContents* source) override;
+
+  // content::JavaScriptDialogManager:
+  void RunJavaScriptDialog(content::WebContents* web_contents,
+                           content::RenderFrameHost* rfh,
+                           content::JavaScriptDialogType dialog_type,
+                           const std::u16string& message_text,
+                           const std::u16string& default_prompt_text,
+                           DialogClosedCallback callback,
+                           bool* did_suppress_message) override;
+  void RunBeforeUnloadDialog(content::WebContents* web_contents,
+                             content::RenderFrameHost* rfh,
+                             bool is_reload,
+                             DialogClosedCallback callback) override;
+  void CancelDialogs(content::WebContents* web_contents,
+                     bool reset_state) override;
 
   void SendMessageAck(int request_id, const base::Value* arg1);
 
@@ -261,6 +289,14 @@ class InspectableWebContents
   std::unique_ptr<InspectableWebContentsView> view_;
 
   bool frontend_loaded_ = false;
+
+  // Re-entrancy guard: ShowDevTools triggers focus on the DevTools WebContents,
+  // which fires JS events whose microtask checkpoint can re-entrantly call
+  // CloseDevTools(). Destroying the WebContents or its widget while the focus
+  // notification is still iterating observers is a CHECK/UAF. These flags defer
+  // the close until the show path has fully unwound.
+  bool is_showing_devtools_ = false;
+  bool close_devtools_pending_ = false;
   scoped_refptr<content::DevToolsAgentHost> agent_host_;
   std::unique_ptr<content::DevToolsFrontendHost> frontend_host_;
   std::unique_ptr<DevToolsEmbedderMessageDispatcher>
@@ -273,11 +309,6 @@ class InspectableWebContents
 
   // origin -> script
   base::flat_map<std::string, std::string> extensions_api_;
-
-  // Contains the set of synced settings.
-  // The DevTools frontend *must* call `Register` for each setting prior to
-  // use, which guarantees that this set must not be persisted.
-  base::flat_set<std::string> synced_setting_names_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

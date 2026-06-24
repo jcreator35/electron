@@ -11,18 +11,34 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/web_contents.h"
+#include "shell/browser/ui/devtools_context_menu.h"
 #include "shell/browser/ui/drag_util.h"
 #include "shell/browser/ui/inspectable_web_contents.h"
 #include "shell/browser/ui/inspectable_web_contents_delegate.h"
 #include "shell/browser/ui/inspectable_web_contents_view_delegate.h"
 #include "ui/base/models/image_model.h"
+#include "ui/compositor/layer.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/window/client_view.h"
 
+#if defined(USE_AURA)
+#include "ui/aura/window.h"
+#endif
+
 namespace electron {
+namespace {
+
+void FlushPendingRootLayout(views::View* view) {
+  view->InvalidateLayout();
+
+  if (views::Widget* widget = view->GetWidget())
+    widget->LayoutRootViewIfNecessary();
+}
+
+}  // namespace
 
 class DevToolsWindowDelegate : public views::ClientView,
                                public views::WidgetDelegate {
@@ -92,6 +108,13 @@ InspectableWebContentsView::InspectableWebContentsView(
 }
 
 InspectableWebContentsView::~InspectableWebContentsView() {
+  if (devtools_window_web_view_)
+    devtools_window_web_view_->SetWebContents(nullptr);
+  if (devtools_web_view_)
+    devtools_web_view_->SetWebContents(nullptr);
+  if (contents_web_view_)
+    contents_web_view_->SetWebContents(nullptr);
+
   if (devtools_window_)
     inspectable_web_contents()->SaveDevToolsBounds(
         devtools_window_->GetWindowBoundsInScreen());
@@ -102,6 +125,17 @@ void InspectableWebContentsView::SetCornerRadii(
   // WebView won't exist for offscreen rendering.
   if (contents_web_view_) {
     contents_web_view_->holder()->SetCornerRadii(corner_radii);
+
+#if defined(USE_AURA)
+    // Aura calls SetIsFastRoundedCorner(true) which clips each tile separately.
+    // This creates a jagged edge at fractional DPI if the view is taller than
+    // one tile, so we use the slow method for a smooth edge at the cost
+    // of an extra render surface.
+    if (auto* native_view = contents_web_view_->holder()->native_view()) {
+      if (auto* layer = native_view->layer())
+        layer->SetIsFastRoundedCorner(false);
+    }
+#endif
   }
 }
 
@@ -128,7 +162,7 @@ void InspectableWebContentsView::ShowDevTools(bool activate) {
     devtools_web_view_->SetWebContents(
         inspectable_web_contents_->GetDevToolsWebContents());
     devtools_web_view_->RequestFocus();
-    DeprecatedLayoutImmediately();
+    FlushPendingRootLayout(this);
   }
 }
 
@@ -153,6 +187,10 @@ void InspectableWebContentsView::CloseDevTools() {
   if (!devtools_visible_)
     return;
 
+  // Tear down any showing context menu before its host widget and the
+  // DevTools WebContents go away.
+  context_menu_.reset();
+
   devtools_visible_ = false;
   if (devtools_window_) {
     auto save_bounds = devtools_window_->IsMinimized()
@@ -166,7 +204,7 @@ void InspectableWebContentsView::CloseDevTools() {
   } else {
     devtools_web_view_->SetVisible(false);
     devtools_web_view_->SetWebContents(nullptr);
-    DeprecatedLayoutImmediately();
+    FlushPendingRootLayout(this);
   }
 }
 
@@ -216,7 +254,7 @@ void InspectableWebContentsView::SetIsDocked(bool docked, bool activate) {
 void InspectableWebContentsView::SetContentsResizingStrategy(
     const DevToolsContentsResizingStrategy& strategy) {
   strategy_.CopyFrom(strategy);
-  DeprecatedLayoutImmediately();
+  FlushPendingRootLayout(this);
 }
 
 void InspectableWebContentsView::SetTitle(const std::u16string& title) {
@@ -228,6 +266,25 @@ void InspectableWebContentsView::SetTitle(const std::u16string& title) {
 
 const std::u16string InspectableWebContentsView::GetTitle() {
   return title_;
+}
+
+void InspectableWebContentsView::ShowDevToolsContextMenu(
+    const content::ContextMenuParams& params) {
+  content::WebContents* devtools_web_contents =
+      inspectable_web_contents_->GetDevToolsWebContents();
+  if (!devtools_web_contents)
+    return;
+
+  // Anchor the menu to the widget that actually hosts the DevTools view so
+  // that opening it doesn't shift focus to the inspected page's window.
+  views::Widget* widget =
+      devtools_window_ ? devtools_window_.get() : GetWidget();
+  if (!widget)
+    return;
+
+  context_menu_ =
+      std::make_unique<DevToolsContextMenu>(devtools_web_contents, params);
+  context_menu_->RunMenuAt(widget);
 }
 
 void InspectableWebContentsView::Layout(PassKey) {

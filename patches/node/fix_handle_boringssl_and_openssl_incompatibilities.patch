@@ -17,7 +17,7 @@ Upstreams:
 - https://github.com/nodejs/node/pull/39136
 
 diff --git a/deps/ncrypto/ncrypto.cc b/deps/ncrypto/ncrypto.cc
-index e1c2da6969a1ce937d397735e844930f3234bba7..0bed152014949c22b6c610198df39a2522890279 100644
+index 07049405de6239d6a2781ac326e3ddfa995bf7dc..f697f440274e1155c153d4d0cc1497ae75122c6c 100644
 --- a/deps/ncrypto/ncrypto.cc
 +++ b/deps/ncrypto/ncrypto.cc
 @@ -11,6 +11,7 @@
@@ -28,39 +28,7 @@ index e1c2da6969a1ce937d397735e844930f3234bba7..0bed152014949c22b6c610198df39a25
  #if OPENSSL_VERSION_MAJOR >= 3
  #include <openssl/core_names.h>
  #include <openssl/params.h>
-@@ -1130,7 +1131,9 @@ int64_t X509View::getValidToTime() const {
-   return tp;
- #else
-   struct tm tp;
--  ASN1_TIME_to_tm(X509_get0_notAfter(cert_), &tp);
-+#ifndef OPENSSL_IS_BORINGSSL
-+   ASN1_TIME_to_tm(X509_get0_notAfter(cert_), &tp);
-+#endif
-   return PortableTimeGM(&tp);
- #endif
- }
-@@ -1142,7 +1145,9 @@ int64_t X509View::getValidFromTime() const {
-   return tp;
- #else
-   struct tm tp;
-+#ifndef OPENSSL_IS_BORINGSSL
-   ASN1_TIME_to_tm(X509_get0_notBefore(cert_), &tp);
-+#endif
-   return PortableTimeGM(&tp);
- #endif
- }
-@@ -2886,10 +2891,6 @@ std::optional<uint32_t> SSLPointer::verifyPeerCertificate() const {
- const char* SSLPointer::getClientHelloAlpn() const {
-   if (ssl_ == nullptr) return {};
- #ifndef OPENSSL_IS_BORINGSSL
--  const unsigned char* buf;
--  size_t len;
--  size_t rem;
--
-   if (!SSL_client_hello_get0_ext(
-           get(),
-           TLSEXT_TYPE_application_layer_protocol_negotiation,
-@@ -3090,9 +3091,11 @@ const Cipher Cipher::AES_256_GCM = Cipher::FromNid(NID_aes_256_gcm);
+@@ -3103,9 +3104,11 @@ const Cipher Cipher::AES_256_GCM = Cipher::FromNid(NID_aes_256_gcm);
  const Cipher Cipher::AES_128_KW = Cipher::FromNid(NID_id_aes128_wrap);
  const Cipher Cipher::AES_192_KW = Cipher::FromNid(NID_id_aes192_wrap);
  const Cipher Cipher::AES_256_KW = Cipher::FromNid(NID_id_aes256_wrap);
@@ -73,10 +41,10 @@ index e1c2da6969a1ce937d397735e844930f3234bba7..0bed152014949c22b6c610198df39a25
  
  bool Cipher::isGcmMode() const {
 diff --git a/deps/ncrypto/ncrypto.h b/deps/ncrypto/ncrypto.h
-index 175ec8ba0f2a908ffad2ce48434aeed573b09c90..3218590ddce1e92c2a9d776f20f9fb016612061d 100644
+index 4f86702da88267ded46d33a943a80ae3c2e17fa6..854c29f27f95634b96780b4750d23986d6ba522f 100644
 --- a/deps/ncrypto/ncrypto.h
 +++ b/deps/ncrypto/ncrypto.h
-@@ -306,9 +306,13 @@ class Cipher final {
+@@ -309,9 +309,13 @@ class Cipher final {
  #else
    static constexpr size_t MAX_AUTH_TAG_LENGTH = 16;
  #endif
@@ -94,7 +62,7 @@ index 175ec8ba0f2a908ffad2ce48434aeed573b09c90..3218590ddce1e92c2a9d776f20f9fb01
    Cipher() = default;
    Cipher(const EVP_CIPHER* cipher) : cipher_(cipher) {}
 diff --git a/node.gni b/node.gni
-index e2407027ab05e59b2f0f1c213b98ea469db7a91b..c64761b730e61edcdc0e46a48699f2fd5bb1c0a6 100644
+index 156fee33b3813fe4d94a1c9585f217a99dbfbd5f..8239967653fee7791800ee3292e77b91bffaaef9 100644
 --- a/node.gni
 +++ b/node.gni
 @@ -11,7 +11,7 @@ declare_args() {
@@ -107,7 +75,7 @@ index e2407027ab05e59b2f0f1c213b98ea469db7a91b..c64761b730e61edcdc0e46a48699f2fd
    # The location of simdutf - use the one from node's deps by default.
    node_simdutf_path = "//third_party/simdutf"
 diff --git a/src/crypto/crypto_cipher.cc b/src/crypto/crypto_cipher.cc
-index 5ed2f8b35a1e2f8348a0f3891f37944f49371256..bd453ae633b2833cc3c6e3e415b43792dc5bf2e5 100644
+index ed509e5c9fe79c5d545180fef0fea9ab6f1ba39b..9446314c95e57ea408568d107a9f6e76886650cb 100644
 --- a/src/crypto/crypto_cipher.cc
 +++ b/src/crypto/crypto_cipher.cc
 @@ -447,6 +447,7 @@ bool CipherBase::InitAuthenticated(const char* cipher_type,
@@ -151,7 +119,7 @@ index d005bf0ffb93445fa6611a1beb1b465764271ede..01770687bd191c61af02e76d7de24bba
        X509View ca(sk_X509_value(peer_certs.get(), i));
        if (!cert->view().isIssuedBy(ca)) continue;
 diff --git a/src/crypto/crypto_context.cc b/src/crypto/crypto_context.cc
-index 6482bd58bb6a95cfa4074ea9535e1443aea66bb5..20d3c1d9d17fde18fc09b6ee219137831eb08a45 100644
+index a5c95da894beb893f1dbc967681f74e0718097f1..67bde0803fc47982e41327be3aa3fc7eaafda2d2 100644
 --- a/src/crypto/crypto_context.cc
 +++ b/src/crypto/crypto_context.cc
 @@ -143,7 +143,7 @@ int SSL_CTX_use_certificate_chain(SSL_CTX* ctx,
@@ -163,7 +131,7 @@ index 6482bd58bb6a95cfa4074ea9535e1443aea66bb5..20d3c1d9d17fde18fc09b6ee21913783
        X509* ca = sk_X509_value(extra_certs, i);
  
        // NOTE: Increments reference count on `ca`
-@@ -1831,11 +1831,12 @@ void SecureContext::SetDHParam(const FunctionCallbackInfo<Value>& args) {
+@@ -1855,11 +1855,12 @@ void SecureContext::SetDHParam(const FunctionCallbackInfo<Value>& args) {
    // If the user specified "auto" for dhparams, the JavaScript layer will pass
    // true to this function instead of the original string. Any other string
    // value will be interpreted as custom DH parameters below.
@@ -177,7 +145,7 @@ index 6482bd58bb6a95cfa4074ea9535e1443aea66bb5..20d3c1d9d17fde18fc09b6ee21913783
    DHPointer dh;
    {
      BIOPointer bio(LoadBIO(env, args[0]));
-@@ -2061,7 +2062,7 @@ void SecureContext::LoadPKCS12(const FunctionCallbackInfo<Value>& args) {
+@@ -2085,7 +2086,7 @@ void SecureContext::LoadPKCS12(const FunctionCallbackInfo<Value>& args) {
    }
  
    // Add CA certs too
@@ -224,10 +192,10 @@ index 33cde71b105c7cf22b559583d2e46bfb50016f6d..659910992dff7c05bb7e367e1cba1425
    // This is to cause hash() to fail when an incorrect
    // outputLength option was passed for a non-XOF hash function.
 diff --git a/src/crypto/crypto_keys.cc b/src/crypto/crypto_keys.cc
-index e805a984322c8348ceba950fe6f45e002ade10b3..bb9b1f8e1b3c6dd8479ee463e303088e3240d6be 100644
+index c05872d73f6fc21cf362928559f3b232a907238d..8efe004ce88ae4d798a24504d47073b331f6525f 100644
 --- a/src/crypto/crypto_keys.cc
 +++ b/src/crypto/crypto_keys.cc
-@@ -1034,6 +1034,7 @@ void KeyObjectHandle::GetAsymmetricKeyType(
+@@ -1225,6 +1225,7 @@ void KeyObjectHandle::GetAsymmetricKeyType(
  }
  
  bool KeyObjectHandle::CheckEcKeyData() const {
@@ -235,7 +203,7 @@ index e805a984322c8348ceba950fe6f45e002ade10b3..bb9b1f8e1b3c6dd8479ee463e303088e
    MarkPopErrorOnReturn mark_pop_error_on_return;
  
    const auto& key = data_.GetAsymmetricKey();
-@@ -1043,6 +1044,9 @@ bool KeyObjectHandle::CheckEcKeyData() const {
+@@ -1234,6 +1235,9 @@ bool KeyObjectHandle::CheckEcKeyData() const {
  
    return data_.GetKeyType() == kKeyTypePrivate ? ctx.privateCheck()
                                                 : ctx.publicCheck();
@@ -246,7 +214,7 @@ index e805a984322c8348ceba950fe6f45e002ade10b3..bb9b1f8e1b3c6dd8479ee463e303088e
  
  void KeyObjectHandle::CheckEcKeyData(const FunctionCallbackInfo<Value>& args) {
 diff --git a/src/crypto/crypto_util.cc b/src/crypto/crypto_util.cc
-index 205e248e0f20f019e189a6c69d3c011a616b3939..12b0d804c6f1d4998b85160b0aac8eb7a3b5576b 100644
+index 3435e43b3baa0c188b984fa1905c6a8614c77de3..a2fa1132c47d8cc4b875396c6cbaa9db6fe20262 100644
 --- a/src/crypto/crypto_util.cc
 +++ b/src/crypto/crypto_util.cc
 @@ -533,24 +533,15 @@ Maybe<void> Decorate(Environment* env,
@@ -276,7 +244,7 @@ index 205e248e0f20f019e189a6c69d3c011a616b3939..12b0d804c6f1d4998b85160b0aac8eb7
  
  #define V(name) case ERR_LIB_##name: lib = #name "_"; break;
 diff --git a/src/env.h b/src/env.h
-index f3a2d221f4bb52987e1bdacdadf19aacfcf65ec3..d34aec43630b3cf53004d8180446d7136b59ceac 100644
+index 3ab33341806ad6c0b06b982a30a57b7b5399e38f..754ddf7b331465c56081db05d6fd2a45fe50596a 100644
 --- a/src/env.h
 +++ b/src/env.h
 @@ -52,7 +52,7 @@
@@ -288,7 +256,7 @@ index f3a2d221f4bb52987e1bdacdadf19aacfcf65ec3..d34aec43630b3cf53004d8180446d713
  #include <openssl/evp.h>
  #endif
  
-@@ -1058,7 +1058,7 @@ class Environment final : public MemoryRetainer {
+@@ -1059,7 +1059,7 @@ class Environment final : public MemoryRetainer {
      kExitInfoFieldCount
    };
  
@@ -298,7 +266,7 @@ index f3a2d221f4bb52987e1bdacdadf19aacfcf65ec3..d34aec43630b3cf53004d8180446d713
    // We declare another alias here to avoid having to include crypto_util.h
    using EVPMDPointer = DeleteFnPtr<EVP_MD, EVP_MD_free>;
 diff --git a/src/node_metadata.h b/src/node_metadata.h
-index d9c533f100d25aeab1fe8589932a8ddead431258..2acab8786a8a752b17961445edeb872c2b08fdeb 100644
+index 8703e4315a999df505ff322aea05a268e017831e..18ddb44400f90f2fbea4ffad09cc1a8f986bf997 100644
 --- a/src/node_metadata.h
 +++ b/src/node_metadata.h
 @@ -8,7 +8,7 @@
@@ -308,10 +276,10 @@ index d9c533f100d25aeab1fe8589932a8ddead431258..2acab8786a8a752b17961445edeb872c
 -#if HAVE_OPENSSL
 +#if 0
  #include <openssl/crypto.h>
- #if NODE_OPENSSL_HAS_QUIC
- #include <openssl/quic.h>
+ #include <quic/guard.h>
+ #ifndef OPENSSL_NO_QUIC
 diff --git a/src/node_options.h b/src/node_options.h
-index 3a1503a035e12b5dce75c77c327607c857a8a367..941ae4f15c42fb8016d03c786973fd4709ac1a0d 100644
+index 6ffa6bf5531d8465a049e36b2ddbbdb5bed20fd3..4964a74eb295d19bf0f37b6bd4750433d0088670 100644
 --- a/src/node_options.h
 +++ b/src/node_options.h
 @@ -11,7 +11,7 @@
@@ -321,5 +289,5 @@ index 3a1503a035e12b5dce75c77c327607c857a8a367..941ae4f15c42fb8016d03c786973fd47
 -#if HAVE_OPENSSL
 +#if 0
  #include "openssl/opensslv.h"
+ #include "quic/guard.h"
  #endif
- 

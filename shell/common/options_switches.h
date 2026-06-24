@@ -138,6 +138,9 @@ inline constexpr std::string_view kOverlayHeight = "height";
 // The factor of which page should be zoomed.
 inline constexpr std::string_view kZoomFactor = "zoomFactor";
 
+// The zoom mode for the web contents.
+inline constexpr std::string_view kZoomMode = "zoomMode";
+
 // Script that will be loaded by guest WebContents before other scripts.
 inline constexpr std::string_view kPreloadScript = "preload";
 
@@ -186,6 +189,8 @@ inline constexpr std::string_view kUseSharedTexture = "useSharedTexture";
 inline constexpr std::string_view kSharedTexturePixelFormat =
     "sharedTexturePixelFormat";
 
+inline constexpr std::string_view kDeviceScaleFactor = "deviceScaleFactor";
+
 inline constexpr std::string_view kNodeIntegrationInSubFrames =
     "nodeIntegrationInSubFrames";
 
@@ -221,6 +226,9 @@ inline constexpr std::string_view kSpellcheck = "spellcheck";
 // document.execCommand("paste").
 inline constexpr std::string_view kEnableDeprecatedPaste =
     "enableDeprecatedPaste";
+
+// Whether to focus the webContents on navigation.
+inline constexpr std::string_view kFocusOnNavigation = "focusOnNavigation";
 
 inline constexpr std::string_view kModal = "modal";
 
@@ -265,6 +273,9 @@ inline constexpr base::cstring_view kStreamingSchemes = "streaming-schemes";
 // Register schemes as supporting V8 code cache.
 inline constexpr base::cstring_view kCodeCacheSchemes = "code-cache-schemes";
 
+// Register schemes as supporting extensions.
+inline constexpr base::cstring_view kExtensionSchemes = "extension-schemes";
+
 // The browser process app model ID
 inline constexpr base::cstring_view kAppUserModelId = "app-user-model-id";
 
@@ -273,10 +284,6 @@ inline constexpr base::cstring_view kAppPath = "app-path";
 
 // The command line switch versions of the options.
 inline constexpr base::cstring_view kScrollBounce = "scroll-bounce";
-
-// Command switch passed to renderer process to control nodeIntegration.
-inline constexpr base::cstring_view kNodeIntegrationInWorker =
-    "node-integration-in-worker";
 
 // Widevine options
 // Path to Widevine CDM binaries.

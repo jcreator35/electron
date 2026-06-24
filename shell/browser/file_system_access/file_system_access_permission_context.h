@@ -116,10 +116,6 @@ class FileSystemAccessPermissionContext
       content::GlobalRenderFrameHostId frame_id,
       EntriesAllowedByEnterprisePolicyCallback callback) override;
 
-  enum class Access { kRead, kWrite, kReadWrite };
-
-  enum class RequestType { kNewPermission, kRestorePermissions };
-
   void RevokeActiveGrants(const url::Origin& origin,
                           const base::FilePath& file_path = base::FilePath());
 
@@ -139,6 +135,11 @@ class FileSystemAccessPermissionContext
   class PermissionGrantImpl;
 
   void PermissionGrantDestroyed(PermissionGrantImpl* grant);
+
+  // Restores the read permission for `path` if it was previously downgraded,
+  // e.g. by a `remove()` call.
+  void MaybeRestoreReadPermission(const url::Origin& origin,
+                                  const base::FilePath& path);
 
   void CheckShouldBlockAccessToPathAndReply(
       base::FilePath path,
@@ -164,7 +165,7 @@ class FileSystemAccessPermissionContext
   void OnRestrictedPathResult(const base::FilePath& file_path,
                               gin::Arguments* args);
 
-  void MaybeEvictEntries(base::Value::Dict& dict);
+  void MaybeEvictEntries(base::DictValue& dict);
 
   void CleanupPermissions(const url::Origin& origin);
 
@@ -189,9 +190,10 @@ class FileSystemAccessPermissionContext
 
   const raw_ptr<const base::Clock> clock_;
 
-  std::map<url::Origin, base::Value::Dict> id_pathinfo_map_;
+  std::map<url::Origin, base::DictValue> id_pathinfo_map_;
 
-  std::map<base::FilePath, base::OnceCallback<void(SensitiveEntryResult)>>
+  std::map<base::FilePath,
+           std::vector<base::OnceCallback<void(SensitiveEntryResult)>>>
       callback_map_;
 
   std::unique_ptr<ChromeFileSystemAccessPermissionContext::BlockPathRules>

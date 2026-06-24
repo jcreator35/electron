@@ -17,7 +17,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/cstring_view.h"
-#include "base/supports_user_data.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "extensions/browser/app_window/size_constraints.h"
@@ -49,6 +48,7 @@ namespace electron {
 
 class ElectronMenuModel;
 class BackgroundThrottlingSource;
+class InspectableWebContentsView;
 
 #if BUILDFLAG(IS_MAC)
 using NativeWindowHandle = gfx::NativeView;
@@ -56,8 +56,7 @@ using NativeWindowHandle = gfx::NativeView;
 using NativeWindowHandle = gfx::AcceleratedWidget;
 #endif
 
-class NativeWindow : public base::SupportsUserData,
-                     public views::WidgetDelegate {
+class NativeWindow : public views::WidgetDelegate {
  public:
   ~NativeWindow() override;
 
@@ -68,6 +67,7 @@ class NativeWindow : public base::SupportsUserData,
   // Create window with existing WebContents, the caller is responsible for
   // managing the window's live.
   static std::unique_ptr<NativeWindow> Create(
+      int32_t base_window_id,
       const gin_helper::Dictionary& options,
       NativeWindow* parent = nullptr);
 
@@ -97,7 +97,7 @@ class NativeWindow : public base::SupportsUserData,
   virtual void SetFullScreen(bool fullscreen) = 0;
   virtual bool IsFullscreen() const = 0;
 
-  virtual void SetBounds(const gfx::Rect& bounds, bool animate = false) = 0;
+  virtual void SetBounds(const gfx::Rect& bounds, bool animate) = 0;
   virtual gfx::Rect GetBounds() const = 0;
   void SetShape(const std::vector<gfx::Rect>& rects);
   void SetSize(const gfx::Size& size, bool animate = false);
@@ -106,9 +106,9 @@ class NativeWindow : public base::SupportsUserData,
   void SetPosition(const gfx::Point& position, bool animate = false);
   [[nodiscard]] gfx::Point GetPosition() const;
 
-  virtual void SetContentSize(const gfx::Size& size, bool animate = false);
+  void SetContentSize(const gfx::Size& size, bool animate = false);
   virtual gfx::Size GetContentSize() const;
-  virtual void SetContentBounds(const gfx::Rect& bounds, bool animate = false);
+  void SetContentBounds(const gfx::Rect& bounds, bool animate = false);
   virtual gfx::Rect GetContentBounds() const;
   virtual bool IsNormal() const;
   virtual gfx::Rect GetNormalBounds() const = 0;
@@ -333,10 +333,10 @@ class NativeWindow : public base::SupportsUserData,
   virtual void NotifyWindowLeaveFullScreen();
   void NotifyWindowEnterHtmlFullScreen();
   void NotifyWindowLeaveHtmlFullScreen();
-  void NotifyWindowAlwaysOnTopChanged();
+  void NotifyWindowAlwaysOnTopChanged(bool is_always_on_top);
   void NotifyWindowExecuteAppCommand(std::string_view command_name);
   void NotifyTouchBarItemInteraction(const std::string& item_id,
-                                     base::Value::Dict details);
+                                     base::DictValue details);
   void NotifyNewWindowForTab();
   void NotifyWindowSystemContextMenu(int x, int y, bool* prevent_default);
   void NotifyLayoutWindowControlsOverlay();
@@ -408,6 +408,13 @@ class NativeWindow : public base::SupportsUserData,
 
   [[nodiscard]] constexpr int32_t window_id() const { return window_id_; }
 
+  InspectableWebContentsView* primary_web_contents_view() const {
+    return primary_web_contents_view_;
+  }
+  void set_primary_web_contents_view(InspectableWebContentsView* view) {
+    primary_web_contents_view_ = view;
+  }
+
   void add_child_window(NativeWindow* child) {
     child_windows_.push_back(child);
   }
@@ -429,8 +436,12 @@ class NativeWindow : public base::SupportsUserData,
   // throttling, then throttling in the `ui::Compositor` will be disabled.
   void UpdateBackgroundThrottlingState();
 
+  [[nodiscard]] auto base_window_id() const { return base_window_id_; }
+
  protected:
-  NativeWindow(const gin_helper::Dictionary& options, NativeWindow* parent);
+  NativeWindow(int32_t base_window_id,
+               const gin_helper::Dictionary& options,
+               NativeWindow* parent);
 
   void set_titlebar_overlay_height(int height) {
     titlebar_overlay_height_ = height;
@@ -459,6 +470,7 @@ class NativeWindow : public base::SupportsUserData,
   const views::Widget* GetWidget() const override;
 
   void set_content_view(views::View* view) { content_view_ = view; }
+  void FlushPendingRootLayout(views::View* view);
 
   static inline constexpr base::cstring_view kNativeWindowKey =
       "__ELECTRON_NATIVE_WINDOW__";
@@ -487,6 +499,9 @@ class NativeWindow : public base::SupportsUserData,
 
   static inline int32_t next_id_ = 0;
   const int32_t window_id_ = ++next_id_;
+
+  // ID of the api::BaseWindow that owns this NativeWindow.
+  const int32_t base_window_id_;
 
   // The "titleBarStyle" option.
   const TitleBarStyle title_bar_style_;
@@ -536,7 +551,10 @@ class NativeWindow : public base::SupportsUserData,
   std::list<DraggableRegionProvider*> draggable_region_providers_;
 
   // Observers of this window.
-  base::ObserverList<NativeWindowObserver> observers_;
+  base::ObserverList<NativeWindowObserver,
+                     false,
+                     base::ObserverListReentrancyPolicy::kAllowReentrancy>
+      observers_;
 
   absl::flat_hash_set<BackgroundThrottlingSource*>
       background_throttling_sources_;
@@ -545,6 +563,8 @@ class NativeWindow : public base::SupportsUserData,
   std::string background_material_;
 
   gfx::Rect overlay_rect_;
+
+  raw_ptr<InspectableWebContentsView> primary_web_contents_view_ = nullptr;
 
   base::WeakPtrFactory<NativeWindow> weak_factory_{this};
 };

@@ -17,8 +17,6 @@
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "url/origin.h"
 
-class PrefService;
-
 namespace extensions {
 class ExtensionsAPIClient;
 class KioskDelegate;
@@ -67,6 +65,8 @@ class ElectronExtensionsBrowserClient
       content::BrowserContext* context) override;
   content::BrowserContext* GetContextRedirectedToOriginal(
       content::BrowserContext* context) override;
+  content::BrowserContext* GetContextRedirectedToOriginalWithoutAshInternals(
+      content::BrowserContext* context) override;
   content::BrowserContext* GetContextOwnInstance(
       content::BrowserContext* context) override;
   content::BrowserContext* GetContextForOriginalOnly(
@@ -76,6 +76,9 @@ class ElectronExtensionsBrowserClient
   bool IsGuestSession(content::BrowserContext* context) const override;
   bool IsExtensionIncognitoEnabled(
       const std::string& extension_id,
+      content::BrowserContext* context) const override;
+  bool IsExtensionIncognitoEnabled(
+      const extensions::Extension* extension,
       content::BrowserContext* context) const override;
   bool CanExtensionCrossIncognito(
       const extensions::Extension* extension,
@@ -95,14 +98,12 @@ class ElectronExtensionsBrowserClient
       const network::ResourceRequest& request,
       network::mojom::RequestDestination destination,
       ui::PageTransition page_transition,
-      int child_id,
+      content::ChildProcessId child_id,
       bool is_incognito,
       const extensions::Extension* extension,
       const extensions::ExtensionSet& extensions,
       const extensions::ProcessMap& process_map,
       const GURL& upstream_url) override;
-  PrefService* GetPrefServiceForContext(
-      content::BrowserContext* context) override;
   void GetEarlyExtensionPrefsObservers(
       content::BrowserContext* context,
       std::vector<extensions::EarlyExtensionPrefsObserver*>* observers)
@@ -132,7 +133,7 @@ class ElectronExtensionsBrowserClient
   void BroadcastEventToRenderers(
       extensions::events::HistogramValue histogram_value,
       const std::string& event_name,
-      base::Value::List args,
+      base::ListValue args,
       bool dispatch_to_off_the_record_profiles) override;
   extensions::ExtensionCache* GetExtensionCache() override;
   bool IsBackgroundUpdateAllowed() override;
@@ -141,6 +142,12 @@ class ElectronExtensionsBrowserClient
       content::WebContents* web_contents) override;
   extensions::ExtensionWebContentsObserver* GetExtensionWebContentsObserver(
       content::WebContents* web_contents) override;
+  bool IsValidTabId(content::BrowserContext* browser_context,
+                    int tab_id,
+                    bool include_incognito,
+                    content::WebContents** web_contents) const override;
+  extensions::ScriptExecutor* GetScriptExecutorForTab(
+      content::WebContents& web_contents) override;
   extensions::KioskDelegate* GetKioskDelegate() override;
   std::string GetApplicationLocale() override;
   void RegisterBrowserInterfaceBindersForFrame(

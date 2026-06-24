@@ -12,6 +12,7 @@
 #include "shell/browser/api/electron_api_web_contents_view.h"
 #include "shell/browser/browser.h"
 #include "shell/browser/native_window.h"
+#include "shell/browser/ui/inspectable_web_contents_view.h"
 #include "shell/browser/web_contents_preferences.h"
 #include "shell/browser/window_list.h"
 #include "shell/common/color_util.h"
@@ -69,6 +70,8 @@ BrowserWindow::BrowserWindow(gin::Arguments* args,
       WebContentsView::Create(isolate, web_preferences);
   DCHECK(web_contents_view.get());
   window()->AddDraggableRegionProvider(web_contents_view.get());
+  window()->set_primary_web_contents_view(
+      static_cast<InspectableWebContentsView*>(web_contents_view->view()));
   web_contents_view_.Reset(isolate, web_contents_view.ToV8());
 
   // Save a reference of the WebContents.
@@ -99,6 +102,8 @@ BrowserWindow::BrowserWindow(gin::Arguments* args,
 }
 
 BrowserWindow::~BrowserWindow() {
+  window()->set_primary_web_contents_view(nullptr);
+
   if (api_web_contents_) {
     // Cleanup the observers if user destroyed this instance directly instead of
     // gracefully closing content::WebContents.
@@ -112,6 +117,7 @@ void BrowserWindow::BeforeUnloadDialogCancelled() {
 }
 
 void BrowserWindow::WebContentsDestroyed() {
+  window()->set_primary_web_contents_view(nullptr);
   api_web_contents_ = nullptr;
   CloseImmediately();
 }
@@ -209,12 +215,8 @@ void BrowserWindow::UpdateWindowControlsOverlay(
 
 void BrowserWindow::CloseImmediately() {
   // Close all child windows before closing current window.
-  v8::HandleScope handle_scope(isolate());
-  for (v8::Local<v8::Value> value : GetChildWindows()) {
-    gin_helper::Handle<BrowserWindow> child;
-    if (gin::ConvertFromV8(isolate(), value, &child) && !child.IsEmpty())
-      child->window()->CloseImmediately();
-  }
+  for (BaseWindow* child : GetChildWindows())
+    child->window()->CloseImmediately();
 
   BaseWindow::CloseImmediately();
 }
@@ -268,11 +270,6 @@ void BrowserWindow::BlurWebView() {
   web_contents()->GetRenderViewHost()->GetWidget()->Blur();
 }
 
-bool BrowserWindow::IsWebViewFocused() {
-  auto* host_view = web_contents()->GetRenderViewHost()->GetWidget()->GetView();
-  return host_view && host_view->HasFocus();
-}
-
 v8::Local<v8::Value> BrowserWindow::GetWebContents(v8::Isolate* isolate) {
   if (web_contents_.IsEmpty())
     return v8::Null(isolate);
@@ -280,16 +277,22 @@ v8::Local<v8::Value> BrowserWindow::GetWebContents(v8::Isolate* isolate) {
 }
 
 void BrowserWindow::OnWindowShow() {
+  if (!web_contents_shown_) {
+    web_contents()->WasShown();
+    web_contents_shown_ = true;
+  }
   BaseWindow::OnWindowShow();
 }
 
 void BrowserWindow::OnWindowHide() {
   web_contents()->WasOccluded();
+  web_contents_shown_ = false;
   BaseWindow::OnWindowHide();
 }
 
 void BrowserWindow::Show() {
   web_contents()->WasShown();
+  web_contents_shown_ = true;
   BaseWindow::Show();
 }
 
@@ -298,6 +301,7 @@ void BrowserWindow::ShowInactive() {
   if (IsModal())
     return;
   web_contents()->WasShown();
+  web_contents_shown_ = true;
   BaseWindow::ShowInactive();
 }
 
@@ -329,18 +333,18 @@ void BrowserWindow::BuildPrototype(v8::Isolate* isolate,
   gin_helper::ObjectTemplateBuilder(isolate, prototype->PrototypeTemplate())
       .SetMethod("focusOnWebView", &BrowserWindow::FocusOnWebView)
       .SetMethod("blurWebView", &BrowserWindow::BlurWebView)
-      .SetMethod("isWebViewFocused", &BrowserWindow::IsWebViewFocused)
       .SetProperty("webContents", &BrowserWindow::GetWebContents);
 }
 
 // static
 v8::Local<v8::Value> BrowserWindow::From(v8::Isolate* isolate,
                                          NativeWindow* native_window) {
-  auto* existing = TrackableObject::FromWrappedClass(isolate, native_window);
-  if (existing)
-    return existing->GetWrapper();
-  else
-    return v8::Null(isolate);
+  if (native_window != nullptr) {
+    if (auto* base = FromWeakMapID(isolate, native_window->base_window_id()))
+      return base->GetWrapper();
+  }
+
+  return v8::Null(isolate);
 }
 
 }  // namespace electron::api

@@ -208,6 +208,10 @@ Emitted when the window exits from a maximized state.
 
 Emitted when the window is minimized.
 
+> [!NOTE]
+> On Wayland, “minimized” is not currently a supported state. The minimize event will only fire when triggered by client-side decoration (e.g. clicking the minimize
+> button on a frameless window’s Window Control Overlay)
+
 #### Event: 'restore'
 
 Emitted when the window is restored from a minimized state.
@@ -351,7 +355,11 @@ Emitted when the window has closed a sheet.
 
 #### Event: 'new-window-for-tab' _macOS_
 
-Emitted when the native new tab button is clicked.
+Emitted when the user clicks the native macOS new tab button. The new
+tab button is only visible if the current `BrowserWindow` has a
+`tabbingIdentifier`.
+
+You must create a window in this handler in order for macOS tabbing to work as expected.
 
 #### Event: 'system-context-menu' _Windows_ _Linux_
 
@@ -756,6 +764,9 @@ Returns [`Rectangle`](structures/rectangle.md) - The `bounds` of the window as `
 > [!NOTE]
 > On macOS, the y-coordinate value returned will be at minimum the [Tray](tray.md) height. For example, calling `win.setBounds({ x: 25, y: 20, width: 800, height: 600 })` with a tray height of 38 means that `win.getBounds()` will return `{ x: 25, y: 38, width: 800, height: 600 }`.
 
+> [!NOTE]
+> On Wayland, this method will return `{ x: 0, y: 0, ... }` as introspecting or programmatically changing the global window coordinates is prohibited.
+
 #### `win.getBackgroundColor()`
 
 Returns `string` - Gets the background color of the window in Hex (`#RRGGBB`) format.
@@ -937,9 +948,13 @@ Sets whether the window should show always on top of other windows. After
 setting this, the window is still a normal window, not a toolbox window which
 can not be focused on.
 
+Not supported on Wayland (Linux).
+
 #### `win.isAlwaysOnTop()`
 
 Returns `boolean` - Whether the window is always on top of other windows.
+
+Not supported on Wayland (Linux).
 
 #### `win.moveAbove(mediaSourceId)`
 
@@ -968,6 +983,9 @@ Moves window to `x` and `y`.
 #### `win.getPosition()`
 
 Returns `Integer[]` - Contains the window's current position.
+
+> [!NOTE]
+> On Wayland, this method will return `[0, 0]` as introspecting or programmatically changing the global window coordinates is prohibited.
 
 #### `win.setTitle(title)`
 
@@ -1043,7 +1061,7 @@ under this mode apps can choose to optimize their UI for tablets, such as
 enlarging the titlebar and hiding titlebar buttons.
 
 This API returns whether the window is in tablet mode, and the `resize` event
-can be be used to listen to changes to tablet mode.
+can be used to listen to changes to tablet mode.
 
 #### `win.getMediaSourceId()`
 
@@ -1119,7 +1137,7 @@ Sets the `menu` as the window's menu bar.
 
 Remove the window's menu bar.
 
-#### `win.setProgressBar(progress[, options])`
+#### `win.setProgressBar(progress[, options])` _Windows_ _macOS_
 
 * `progress` Double
 * `options` Object (optional)
@@ -1129,10 +1147,6 @@ Sets progress value in progress bar. Valid range is \[0, 1.0].
 
 Remove progress bar when progress < 0;
 Change to indeterminate mode when progress > 1.
-
-On Linux platform, only supports Unity desktop environment, you need to specify
-the `*.desktop` file name to `desktopName` field in `package.json`. By default,
-it will assume `{app.name}.desktop`.
 
 On Windows, a mode can be passed. Accepted values are `none`, `normal`,
 `indeterminate`, `error`, and `paused`. If you call `setProgressBar` without a

@@ -14,15 +14,15 @@ track down the source of this problem & figure out if we can fix it
 by changing something in Electron.
 
 diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
-index ee9213aff2fa231623956650d75a3423250ec0cb..248bd4f811d300a41f01e309949612c49c7926f7 100644
+index 75e66bc57b55bddb8aa36f78604862c2657ea3f0..0cb32ddefd0056dc4f456f7ad4612bb089f10bae 100644
 --- a/content/browser/web_contents/web_contents_impl.cc
 +++ b/content/browser/web_contents/web_contents_impl.cc
-@@ -5298,7 +5298,7 @@ FrameTree* WebContentsImpl::CreateNewWindow(
+@@ -5565,7 +5565,7 @@ FrameTree* WebContentsImpl::CreateNewWindow(
            : IsGuest();
    // While some guest types do not have a guest SiteInstance, the ones that
    // don't all override WebContents creation above.
--  CHECK_EQ(source_site_instance->IsGuest(), is_guest);
-+  // CHECK_EQ(source_site_instance->IsGuest(), is_guest);
+-  CHECK_EQ(source_site_instance->GetSecurityPrincipal().IsGuest(), is_guest);
++  // CHECK_EQ(source_site_instance->GetSecurityPrincipal().IsGuest(), is_guest);
  
    // We usually create the new window in the same BrowsingInstance (group of
    // script-related windows), by passing in the current SiteInstance.  However,

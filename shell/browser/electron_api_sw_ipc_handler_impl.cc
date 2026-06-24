@@ -159,11 +159,9 @@ gin_helper::internal::Event* ElectronApiSWIPCHandlerImpl::MakeIPCEvent(
     bool internal,
     electron::mojom::ElectronApiIPC::InvokeCallback callback) {
   if (!session) {
-    if (callback) {
-      // We must always invoke the callback if present.
-      gin_helper::internal::ReplyChannel::Create(isolate, std::move(callback))
-          ->SendError("Session does not exist");
-    }
+    // We must always invoke the callback if present.
+    gin_helper::internal::ReplyChannel::SendError(isolate, std::move(callback),
+                                                  "Session does not exist");
     return {};
   }
 
@@ -212,7 +210,7 @@ void ElectronApiSWIPCHandlerImpl::RenderProcessExited(
 
 // static
 void ElectronApiSWIPCHandlerImpl::BindReceiver(
-    int render_process_id,
+    content::ChildProcessId render_process_id,
     int64_t version_id,
     mojo::PendingAssociatedReceiver<mojom::ElectronApiIPC> receiver) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);

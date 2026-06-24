@@ -159,6 +159,22 @@ Notification activated (com.github.Electron:notification:EAF7B87C-A113-43D7-8E76
 Notification replied to (com.github.Electron:notification:EAF7B87C-A113-43D7-8E76-F88EC9D73D44)
 ```
 
+### `ELECTRON_DEBUG_MSIX_UPDATER`
+
+Adds extra logs to MSIX updater operations on Windows to aid in debugging. Extra logging will be displayed when MSIX update operations are initiated, including package updates, package registration, and restart registration. This helps diagnose issues with MSIX package updates and deployments.
+
+Sample output:
+
+```sh
+UpdateMsix called with URI: https://example.com/app.msix
+DoUpdateMsix: Starting
+Calling AddPackageByUriAsync... URI: https://example.com/app.msix
+Update options - deferRegistration: true, developerMode: false, forceShutdown: false, forceTargetShutdown: false, forceUpdateFromAnyVersion: false
+Waiting for deployment...
+Deployment finished.
+MSIX Deployment completed.
+```
+
 ### `ELECTRON_LOG_ASAR_READS`
 
 When Electron reads from an ASAR file, log the read offset and file path to
@@ -185,4 +201,24 @@ the one downloaded by `npm install`. Usage:
 
 ```sh
 export ELECTRON_OVERRIDE_DIST_PATH=/Users/username/projects/electron/out/Testing
+```
+
+### `ELECTRON_INSTALL_PLATFORM`
+
+Manually overrides platform used by `electron` package during an install.
+This can be useful if you are on one platform (e.g macOS) but want to
+download binaries for another platform (e.g Windows or Linux). Usage:
+
+```sh
+ELECTRON_INSTALL_PLATFORM=darwin npm install
+```
+
+### `ELECTRON_INSTALL_ARCH`
+
+Manually overrides architecture used by `electron` package during an install.
+This can be useful if you are on one arch (e.g `arm64`) but want to download
+binaries meant for another arch. Note that this will not work under Rosetta. Usage:
+
+```sh
+ELECTRON_INSTALL_ARCH=arm64 npm install
 ```

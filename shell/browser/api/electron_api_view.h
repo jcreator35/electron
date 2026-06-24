@@ -37,12 +37,13 @@ class View : public gin_helper::EventEmitter<View>,
                       std::optional<size_t> index);
   void RemoveChildView(gin_helper::Handle<View> child);
 
-  void SetBounds(const gfx::Rect& bounds);
+  void SetBounds(const gfx::Rect& bounds, gin::Arguments* args);
   gfx::Rect GetBounds() const;
   void SetLayout(v8::Isolate* isolate, v8::Local<v8::Object> value);
   std::vector<v8::Local<v8::Value>> GetChildren();
   void SetBackgroundColor(std::optional<WrappedSkColor> color);
   void SetBorderRadius(int radius);
+  void SetBackgroundBlur(int blur_radius);
   void SetVisible(bool visible);
   bool GetVisible() const;
 
@@ -70,6 +71,7 @@ class View : public gin_helper::EventEmitter<View>,
   void OnChildViewRemoved(views::View* observed_view,
                           views::View* child) override;
 
+  ui::Layer* GetLayer();
   void ApplyBorderRadius();
   void ReorderChildView(gin_helper::Handle<View> child, size_t index);
 

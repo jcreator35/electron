@@ -38,11 +38,13 @@ class OffScreenWebContentsView : public content::WebContentsView,
       bool transparent,
       bool offscreen_use_shared_texture,
       const std::string& offscreen_shared_texture_pixel_format,
+      float offscreen_device_scale_factor,
       const OnPaintCallback& callback);
   ~OffScreenWebContentsView() override;
 
   void SetWebContents(content::WebContents*);
   void SetNativeWindow(NativeWindow* window);
+  void SetCallback(const OnPaintCallback& callback);
 
   // NativeWindowObserver:
   void OnWindowResize() override;
@@ -85,14 +87,14 @@ class OffScreenWebContentsView : public content::WebContentsView,
 #endif
 
   // content::RenderViewHostDelegateView
-  void StartDragging(const content::DropData& drop_data,
-                     const url::Origin& source_origin,
-                     blink::DragOperationsMask allowed_ops,
-                     const gfx::ImageSkia& image,
-                     const gfx::Vector2d& cursor_offset,
-                     const gfx::Rect& drag_obj_rect,
-                     const blink::mojom::DragEventSourceInfo& event_info,
-                     content::RenderWidgetHostImpl* source_rwh) override;
+  void StartDragging(
+      content::RenderFrameHost& source_rfh,
+      const content::DropData& drop_data,
+      blink::DragOperationsMask allowed_ops,
+      const gfx::ImageSkia& image,
+      const gfx::Vector2d& cursor_offset,
+      const gfx::Rect& drag_obj_rect,
+      const blink::mojom::DragEventSourceInfo& event_info) override;
   void UpdateDragOperation(ui::mojom::DragOperation operation,
                            bool document_is_handling_drag) override {}
   void SetPainting(bool painting);
@@ -113,6 +115,7 @@ class OffScreenWebContentsView : public content::WebContentsView,
   const bool transparent_;
   const bool offscreen_use_shared_texture_;
   const std::string offscreen_shared_texture_pixel_format_;
+  const float offscreen_device_scale_factor_;
   bool painting_ = true;
   int frame_rate_ = 60;
   OnPaintCallback callback_;

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ptr_exclusion.h"
@@ -21,9 +22,8 @@
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"  // nogncheck
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "content/common/frame.mojom-forward.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/frame_tree_node_id.h"
+#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -31,9 +31,6 @@
 #include "content/public/common/stop_find_action.h"
 #include "electron/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
-#include "shell/browser/api/electron_api_debugger.h"
-#include "shell/browser/api/electron_api_session.h"
-#include "shell/browser/api/save_page_handler.h"
 #include "shell/browser/background_throttling_source.h"
 #include "shell/browser/event_emitter_mixin.h"
 #include "shell/browser/extended_web_contents_observer.h"
@@ -41,13 +38,11 @@
 #include "shell/browser/preload_script.h"
 #include "shell/browser/ui/inspectable_web_contents_delegate.h"
 #include "shell/browser/ui/inspectable_web_contents_view_delegate.h"
-#include "shell/common/api/api.mojom.h"
 #include "shell/common/gin_helper/cleaned_up_at_exit.h"
 #include "shell/common/gin_helper/constructible.h"
-#include "shell/common/gin_helper/handle.h"
 #include "shell/common/gin_helper/pinnable.h"
 #include "shell/common/gin_helper/wrappable.h"
-#include "shell/common/web_contents_utility.mojom.h"
+#include "third_party/skia/include/core/SkRegion.h"
 #include "ui/base/models/image_model.h"
 #include "v8/include/cppgc/persistent.h"
 
@@ -64,8 +59,14 @@ struct DeviceEmulationParams;
 // enum class PermissionType;
 }  // namespace blink
 
+namespace base {
+class FilePath;
+class Value;
+}  // namespace base
+
 namespace content {
 enum class KeyboardEventProcessingResult;
+class DevToolsAgentHost;
 class WebContents;
 }  // namespace content
 
@@ -76,6 +77,8 @@ class Arguments;
 namespace gin_helper {
 class Dictionary;
 class ErrorThrower;
+template <typename T>
+class Handle;
 template <typename T>
 class Promise;
 }  // namespace gin_helper
@@ -93,7 +96,6 @@ class Cursor;
 }
 
 class DevToolsEyeDropper;
-class SkRegion;
 
 namespace electron {
 
@@ -101,7 +103,6 @@ class ElectronBrowserContext;
 class InspectableWebContents;
 class WebContentsZoomController;
 class WebViewGuestDelegate;
-class WebDialogHelper;
 class NativeWindow;
 class OffScreenRenderWidgetHostView;
 class OffScreenWebContentsView;
@@ -109,7 +110,9 @@ class OffScreenWebContentsView;
 namespace api {
 
 class BaseWindow;
+class Debugger;
 class FrameSubscriber;
+class Session;
 
 // Wrapper around the content::WebContents.
 class WebContents final : public ExclusiveAccessContext,
@@ -194,7 +197,7 @@ class WebContents final : public ExclusiveAccessContext,
   int32_t GetProcessID() const;
   base::ProcessId GetOSProcessID() const;
   [[nodiscard]] Type type() const { return type_; }
-  bool Equal(const WebContents* web_contents) const;
+  v8::Local<v8::Value> Clone(v8::Isolate* isolate);
   void LoadURL(const GURL& url, const gin_helper::Dictionary& options);
   void Reload();
   void ReloadIgnoringCache();
@@ -211,7 +214,6 @@ class WebContents final : public ExclusiveAccessContext,
   void GoForward();
   bool CanGoToOffset(int offset) const;
   void GoToOffset(int offset);
-  bool CanGoToIndex(int index) const;
   void GoToIndex(int index);
   int GetActiveIndex() const;
   content::NavigationEntry* GetNavigationEntryAtIndex(int index) const;
@@ -228,6 +230,7 @@ class WebContents final : public ExclusiveAccessContext,
   v8::Local<v8::Value> GetWebRTCUDPPortRange(v8::Isolate* isolate) const;
   void SetWebRTCUDPPortRange(gin::Arguments* args);
   std::string GetMediaSourceID(content::WebContents* request_web_contents);
+  std::string GetOrCreateDevToolsTargetId();
   bool IsCrashed() const;
   void ForcefullyCrashRenderer();
   void SetUserAgent(const std::string& user_agent);
@@ -333,10 +336,12 @@ class WebContents final : public ExclusiveAccessContext,
   double GetZoomLevel() const;
   void SetZoomFactor(gin_helper::ErrorThrower thrower, double factor);
   double GetZoomFactor() const;
+  void SetZoomMode(gin_helper::ErrorThrower thrower, const std::string& mode);
+  std::string GetZoomMode() const;
 
   // Callback triggered on permission response.
   void OnEnterFullscreenModeForTab(
-      content::RenderFrameHost* requesting_frame,
+      const content::GlobalRenderFrameHostToken& frame_token,
       const blink::mojom::FullscreenOptions& options,
       bool allowed);
 
@@ -378,7 +383,7 @@ class WebContents final : public ExclusiveAccessContext,
   content::RenderFrameHost* Opener();
   content::RenderFrameHost* FocusedFrame();
 
-  WebContentsZoomController* GetZoomController() { return zoom_controller_; }
+  [[nodiscard]] WebContentsZoomController* GetZoomController() const;
 
   void AddObserver(ExtendedWebContentsObserver* obs) {
     observers_.AddObserver(obs);
@@ -432,7 +437,8 @@ class WebContents final : public ExclusiveAccessContext,
 
   // content::RenderWidgetHost::InputEventObserver:
   void OnInputEvent(const content::RenderWidgetHost& rfh,
-                    const blink::WebInputEvent& event) override;
+                    const blink::WebInputEvent& event,
+                    input::InputEventSource source) override;
 
   // content::JavaScriptDialogManager:
   void RunJavaScriptDialog(content::WebContents* web_contents,
@@ -460,6 +466,9 @@ class WebContents final : public ExclusiveAccessContext,
   WebContents& operator=(const WebContents&) = delete;
 
  private:
+  // Store last emitted favicon URLs to avoid duplicate page-favicon-updated
+  // events
+  base::flat_set<GURL> last_favicon_urls_;
   // Does not manage lifetime of |web_contents|.
   WebContents(v8::Isolate* isolate, content::WebContents* web_contents);
   // Takes over ownership of |web_contents|.
@@ -505,6 +514,8 @@ class WebContents final : public ExclusiveAccessContext,
       const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
       const content::StoragePartitionConfig& partition_config,
       content::SessionStorageNamespace* session_storage_namespace) override;
   void WebContentsCreatedWithFullParams(
@@ -627,6 +638,11 @@ class WebContents final : public ExclusiveAccessContext,
       content::NavigationHandle* navigation_handle) override;
   void ReadyToCommitNavigation(
       content::NavigationHandle* navigation_handle) override;
+  // Pushes preload script contents + process info to a sandboxed renderer over
+  // the navigation's associated mojo channel, ahead of CommitNavigation.
+  // Replaces the BROWSER_SANDBOX_LOAD sync IPC for the common path.
+  void MaybeSendRendererStartupData(
+      content::NavigationHandle* navigation_handle);
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
   void WebContentsDestroyed() override;
@@ -669,6 +685,9 @@ class WebContents final : public ExclusiveAccessContext,
   ElectronBrowserContext* GetBrowserContext() const;
 
   void OnElectronBrowserConnectionError();
+
+  // Posted from PrimaryMainFrameRenderProcessGone(); see the comment there.
+  void EmitRenderProcessGone(base::TerminationStatus status, int exit_code);
 
   OffScreenWebContentsView* GetOffScreenWebContentsView() const;
   OffScreenRenderWidgetHostView* GetOffScreenRenderWidgetHostView() const;
@@ -771,6 +790,13 @@ class WebContents final : public ExclusiveAccessContext,
   // Update the html fullscreen flag in both browser and renderer.
   void UpdateHtmlApiFullscreen(bool fullscreen);
 
+  void OnReadAvailableTypes(
+      const content::ContextMenuParams& params,
+      content::GlobalRenderFrameHostId render_frame_host_id,
+      std::vector<std::u16string> types);
+
+  [[nodiscard]] bool CanGoToIndex(int index) const;
+
   cppgc::Persistent<api::Session> session_;
   v8::Global<v8::Value> devtools_web_contents_;
   cppgc::Persistent<api::Debugger> debugger_;
@@ -806,7 +832,10 @@ class WebContents final : public ExclusiveAccessContext,
   bool enable_devtools_ = true;
 
   // Observers of this WebContents.
-  base::ObserverList<ExtendedWebContentsObserver> observers_;
+  base::ObserverList<ExtendedWebContentsObserver,
+                     false,
+                     base::ObserverListReentrancyPolicy::kAllowReentrancy>
+      observers_;
 
   v8::Global<v8::Value> pending_child_web_preferences_;
 
@@ -818,6 +847,9 @@ class WebContents final : public ExclusiveAccessContext,
   // Whether offscreen rendering use gpu shared texture
   bool offscreen_use_shared_texture_ = false;
   std::string offscreen_shared_texture_pixel_format_ = "argb";
+
+  // Use 1.0f for consistent behavior.
+  float offscreen_device_scale_factor_ = 1.0f;
 
   // Whether window is fullscreened by HTML5 api.
   bool html_fullscreen_ = false;
@@ -840,11 +872,6 @@ class WebContents final : public ExclusiveAccessContext,
   // destroyed before dialog_manager_, otherwise a crash would happen.
   std::unique_ptr<InspectableWebContents> inspectable_web_contents_;
 
-  // The zoom controller for this webContents.
-  // Note: owned by inspectable_web_contents_, so declare this *after*
-  // that field to ensure the dtor destroys them in the right order.
-  raw_ptr<WebContentsZoomController> zoom_controller_ = nullptr;
-
   std::optional<GURL> pending_unload_url_ = std::nullopt;
 
   // Maps url to file path, used by the file requests sent from devtools.
@@ -864,13 +891,19 @@ class WebContents final : public ExclusiveAccessContext,
   const scoped_refptr<base::TaskRunner> print_task_runner_;
 #endif
 
-  // Track navigation state in order to avoid potential re-entrancy crashes.
+  // Track navigation state in order to avoid potential re-entrancy crashes
+  // in LoadURL. Checked by LoadURL to reject re-entrant navigation attempts.
   bool is_safe_to_delete_ = true;
+
+  // Set to true while dispatching JS events via Emit(). When true, Destroy()
+  // defers guest WebContents deletion to prevent use-after-free when a JS
+  // handler calls webContents.destroy() mid-emission.
+  bool is_emitting_event_ = false;
 
   // Stores the frame that's currently in fullscreen, nullptr if there is none.
   raw_ptr<content::RenderFrameHost> fullscreen_frame_ = nullptr;
 
-  std::unique_ptr<SkRegion> draggable_region_;
+  std::optional<SkRegion> draggable_region_;
 
   base::WeakPtrFactory<WebContents> weak_factory_{this};
 };

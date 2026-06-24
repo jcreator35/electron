@@ -27,6 +27,7 @@ runs:
         python3 src/tools/clang/scripts/update.py
         # Refs https://chromium-review.googlesource.com/c/chromium/src/+/6667681
         python3 src/tools/clang/scripts/update.py --package objdump
+        python3 src/tools/clang/scripts/update.py --package clang-tidy
     - name: Fix esbuild
       if: ${{ inputs.target-platform != 'linux' }}
       uses: ./src/electron/.github/actions/cipd-install
@@ -37,6 +38,22 @@ runs:
         installation-dir: third_party/esbuild
         target-platform: ${{ inputs.target-platform }}
         package: infra/3pp/tools/esbuild/${platform}
+    - name: Fix rollup
+      if: ${{ inputs.target-platform != 'linux' }}
+      uses: ./src/electron/.github/actions/cipd-install
+      with:
+        cipd-root-prefix-path: src/third_party/devtools-frontend/src/
+        dependency: rollup_libs
+        deps-file: src/third_party/devtools-frontend/src/DEPS
+        installation-dir: third_party/rollup_libs
+        target-platform: ${{ inputs.target-platform }}
+        package: infra/3pp/tools/rollup_libs/${platform}
+    - name: Sync native rollup libs
+      if: ${{ inputs.target-platform != 'linux' }}
+      shell: bash
+      run : |
+        cd src/third_party/devtools-frontend/src
+        python3 scripts/deps/sync_rollup_libs.py
     - name: Fix rustc
       if: ${{ inputs.target-platform != 'linux' }}
       shell: bash
@@ -116,7 +133,7 @@ runs:
       run : |
         cd src/third_party/angle
         rm -f .git/objects/info/alternates
-        git remote set-url origin https://chromium.googlesource.com/angle/angle.git
+        git remote set-url origin https://github.com/google/angle.git
         cp .git/config .git/config.backup
         git remote remove origin
         mv .git/config.backup .git/config

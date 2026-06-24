@@ -34,10 +34,6 @@
 #include "printing/printing_features.h"
 #endif
 
-#if BUILDFLAG(IS_WIN)
-#include "ui/views/views_features.h"
-#endif
-
 namespace electron {
 
 void InitializeFeatureList() {
@@ -62,16 +58,15 @@ void InitializeFeatureList() {
       // See https://chromium-review.googlesource.com/c/chromium/src/+/6910012
       // Needed until we rework some of our logic and checks to enable this
       // properly.
-      std::string(",") + network::features::kLocalNetworkAccessChecks.name;
+      std::string(",") + network::features::kLocalNetworkAccessChecks.name +
+      // See 4803165: Enable suppressing input event dispatch while
+      // paint-holding. Needed to prevent spurious input event handling
+      // failures.
+      // TODO(codebytere): Figure out how to properly wait for paint-hold.
+      std::string(",") +
+      blink::features::kDropInputEventsWhilePaintHolding.name;
 
 #if BUILDFLAG(IS_WIN)
-  // Refs https://issues.chromium.org/issues/401996981
-  // TODO(deepak1556): Remove this once test added in
-  // https://github.com/electron/electron/pull/12904
-  // can work without this feature.
-  enable_features += std::string(",") +
-                     views::features::kEnableTransparentHwndEnlargement.name;
-
   // See https://chromium-review.googlesource.com/c/chromium/src/+/7204292
   // This feature causes the following sandbox failure on Windows:
   // sandbox\policy\win\sandbox_win.cc:777 Sandbox cannot access executable
@@ -79,13 +74,6 @@ void InitializeFeatureList() {
   // See https://bit.ly/31yqMJR.: Access is denied. (0x5)
   disable_features +=
       std::string(",") + sandbox::policy::features::kNetworkServiceSandbox.name;
-#endif
-
-#if BUILDFLAG(IS_MAC)
-  disable_features +=
-      // MacWebContentsOcclusion is causing some odd visibility
-      // issues with multiple web contents
-      std::string(",") + features::kMacWebContentsOcclusion.name;
 #endif
 
 #if BUILDFLAG(ENABLE_PDF_VIEWER)

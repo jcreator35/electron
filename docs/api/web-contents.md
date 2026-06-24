@@ -62,7 +62,7 @@ console.log(webContents)
 ### `webContents.getAllWebContents()`
 
 Returns `WebContents[]` - An array of all `WebContents` instances. This will contain web contents
-for all windows, webviews, opened devtools, and devtools extension background pages.
+for all windows, webviews, opened DevTools, and DevTools extension background pages.
 
 ### `webContents.getFocusedWebContents()`
 
@@ -226,7 +226,16 @@ Returns:
     Only defined when the window is being created by a form that set
     `target=_blank`.
   * `disposition` string - Can be `default`, `foreground-tab`,
-    `background-tab`, `new-window` or `other`.
+    `background-tab`, `new-window` or `other`. Corresponds to the manner
+    an associated link was clicked. See Chromium's
+    [WindowOpenDisposition](https://source.chromium.org/chromium/chromium/src/+/main:ui/base/window_open_disposition.h).
+    * `default` - Indicates Chromium deems in-window navigation valid
+      for a window open call.
+    * `foreground-tab` - Corresponds to a left click or shift + middle click.
+    * `background-tab` - Corresponds to a middle click or ctrl/cmd + click.
+    * `new-window` - Corresponds to a shift + left click.
+    * `other` - A catch-all for the remaining Chromium dispositions not
+      handled by Electron.
 
 Emitted _after_ successful creation of a window via `window.open` in the renderer.
 Not emitted if the creation of the window is canceled from
@@ -383,7 +392,7 @@ Emitted after a server side redirect occurs during navigation.  For example a 30
 redirect.
 
 This event cannot be prevented, if you want to prevent redirects you should
-checkout out the `will-redirect` event above.
+check out the `will-redirect` event above.
 
 #### Event: 'did-navigate'
 
@@ -933,7 +942,7 @@ copying data between CPU and GPU memory, with Chromium's hardware acceleration s
 Only a limited number of textures can exist at the same time, so it's important that you call `texture.release()` as soon as you're done with the texture.
 By managing the texture lifecycle by yourself, you can safely pass the `texture.textureInfo` to other processes through IPC.
 
-More details can be found in the [offscreen rendering tutorial](../tutorial/offscreen-rendering.md). To learn about how to handle the texture in native code, refer to [offscreen rendering's code documentation.](https://github.com/electron/electron/blob/main/shell/browser/osr/README.md).
+More details can be found in the [offscreen rendering tutorial](../tutorial/offscreen-rendering.md). To learn about how to handle the texture in native code, refer to [offscreen rendering's code documentation.](../../shell/browser/osr/README.md).
 
 ```js
 const { BrowserWindow } = require('electron')
@@ -958,7 +967,7 @@ win.loadURL('https://github.com')
 
 #### Event: 'devtools-reload-page'
 
-Emitted when the devtools window instructs the webContents to reload
+Emitted when the DevTools window instructs the webContents to reload
 
 #### Event: 'will-attach-webview'
 
@@ -1449,8 +1458,17 @@ Ignore application menu shortcuts while this web contents is focused.
     * `url` string - The _resolved_ version of the URL passed to `window.open()`. e.g. opening a window with `window.open('foo')` will yield something like `https://the-origin/the/current/path/foo`.
     * `frameName` string - Name of the window provided in `window.open()`
     * `features` string - Comma separated list of window features provided to `window.open()`.
-    * `disposition` string - Can be `default`, `foreground-tab`, `background-tab`,
-      `new-window` or `other`.
+    * `disposition` string - Can be `default`, `foreground-tab`,
+      `background-tab`, `new-window` or `other`. Corresponds to the manner
+      an associated link was clicked. See Chromium's
+      [WindowOpenDisposition](https://source.chromium.org/chromium/chromium/src/+/main:ui/base/window_open_disposition.h).
+      * `default` - Indicates Chromium deems in-window navigation valid
+        for a window open call.
+      * `foreground-tab` - Corresponds to a left click or shift + middle click.
+      * `background-tab` - Corresponds to a middle click or ctrl/cmd + click.
+      * `new-window` - Corresponds to a shift + left click.
+      * `other` - A catch-all for the remaining Chromium dispositions not
+        handled by Electron.
     * `referrer` [Referrer](structures/referrer.md) - The referrer that will be
       passed to the new window. May or may not result in the `Referer` header being
       sent, depending on the referrer policy.
@@ -1465,7 +1483,7 @@ Ignore application menu shortcuts while this web contents is focused.
   without a recognized 'action' value will result in a console error and have
   the same effect as returning `{action: 'deny'}`.
 
-Called before creating a window a new window is requested by the renderer, e.g.
+Called before creating a window when a new window is requested by the renderer, e.g.
 by `window.open()`, a link with `target="_blank"`, shift+clicking on a link, or
 submitting a form with `<form target="_blank">`. See
 [`window.open()`](window-open.md) for more details and how to use this in
@@ -1485,6 +1503,11 @@ mainWindow.webContents.setWindowOpenHandler((details) => {
       const browserView = new BrowserView(options)
       mainWindow.addBrowserView(browserView)
       browserView.setBounds({ x: 0, y: 0, width: 640, height: 480 })
+      // For `background-tab` disposition (e.g., when middle-clicking or ctrl/cmd-clicking a link),
+      // `options.webContents` is undefined because its creation can be deferred. So load the URL manually.
+      if (details.disposition === 'background-tab') {
+        browserView.webContents.loadURL(details.url)
+      }
       return browserView.webContents
     }
   }
@@ -1528,13 +1551,51 @@ limits of 300% and 50% of original size, respectively. The formula for this is
 `scale := 1.2 ^ level`.
 
 > [!NOTE]
-> The zoom policy at the Chromium level is same-origin, meaning that the
-> zoom level for a specific domain propagates across all instances of windows with
-> the same domain. Differentiating the window URLs will make zoom work per-window.
+> The zoom policy at the Chromium level is same-origin by default, meaning that
+> the zoom level for a specific domain propagates across all instances of windows
+> with the same domain. To use per-webContents zoom instead, set the zoom mode to
+> `'isolated'` via [`contents.setZoomMode('isolated')`](#contentssetzoommodemode).
 
 #### `contents.getZoomLevel()`
 
 Returns `number` - the current zoom level.
+
+#### `contents.setZoomMode(mode)`
+
+<!--
+```YAML history
+added:
+  - pr-url: https://github.com/electron/electron/pull/49962
+```
+-->
+
+* `mode` string - Can be `default`, `isolated`, `manual`, or `disabled`.
+
+Sets the zoom mode for this web contents.
+
+* `default` - Zoom changes are handled automatically on a per-origin basis.
+  Other webContents navigated to the same origin will share the same zoom level.
+* `isolated` - Zoom changes are handled automatically but on a per-webContents basis.
+  This webContents will not be affected by zoom changes in other webContents, and vice versa.
+* `manual` - Automatic zoom handling is disabled. The `zoom-changed` event
+  will still be dispatched, but the page will not actually be zoomed.
+  The zoom level can be managed manually by the application.
+* `disabled` - All zooming in this webContents is disabled. The webContents will revert
+  to the default zoom level and all zoom changes will be ignored.
+
+The `isolated` and `manual` zoom modes persist across navigations.
+
+#### `contents.getZoomMode()`
+
+<!--
+```YAML history
+added:
+  - pr-url: https://github.com/electron/electron/pull/49962
+```
+-->
+
+Returns `string` - The current zoom mode. Can be `default`, `isolated`,
+`manual`, or `disabled`.
 
 #### `contents.setVisualZoomLevelLimits(minimumLevel, maximumLevel)`
 
@@ -1579,6 +1640,20 @@ Centers the current text selection in web page.
 * `y` Integer
 
 Copy the image at the given position to the clipboard.
+
+#### `contents.copyVideoFrameAt(x, y)`
+
+* `x` Integer
+* `y` Integer
+
+When executed on a video media element, copies the frame at (x, y) to the clipboard.
+
+#### `contents.saveVideoFrameAs(x, y)`
+
+* `x` Integer
+* `y` Integer
+
+When executed on a video media element, shows a save dialog and saves the frame at (x, y) to disk.
 
 #### `contents.paste()`
 
@@ -1748,11 +1823,12 @@ Returns `Promise<PrinterInfo[]>` - Resolves with a [`PrinterInfo[]`](structures/
   * `footer` string (optional) - string to be printed as page footer.
   * `pageSize` string | Size (optional) - Specify page size of the printed document. Can be `A0`, `A1`, `A2`, `A3`,
   `A4`, `A5`, `A6`, `Legal`, `Letter`, `Tabloid` or an Object containing `height` and `width`.
+  * `usePrinterDefaultPageSize` boolean (optional) - Whether to use a given printer's default page size. Default is `false`. Cannot be combined with `pageSize`. When `deviceName` is provided, uses the default page size of that specific printer. When `deviceName` is not provided, uses the default page size of the system's default printer. If the printer's default page size cannot be retrieved, falls back to A4 (210mm x 297mm).
 * `callback` Function (optional)
   * `success` boolean - Indicates success of the print call.
   * `failureReason` string - Error description called back if the print fails.
 
-When a custom `pageSize` is passed, Chromium attempts to validate platform specific minimum values for `width_microns` and `height_microns`. Width and height must both be minimum 353 microns but may be higher on some operating systems.
+When a custom `pageSize` is passed, Chromium attempts to validate platform specific minimum values for `width_microns` and `height_microns`. Width and height must both be minimum 353 microns but may be higher on some operating systems. If a valid `pageSize` is not passed and `usePrinterDefaultPageSize` is `false`, an error will be thrown.
 
 Prints window's web page. When `silent` is set to `true`, Electron will pick
 the system's default printer if `deviceName` is empty and the default settings for printing.
@@ -1865,66 +1941,20 @@ Removes the specified path from DevTools workspace.
 
 * `devToolsWebContents` WebContents
 
-Uses the `devToolsWebContents` as the target `WebContents` to show devtools.
+Uses the `devToolsWebContents` as the target `WebContents` to show DevTools.
 
 The `devToolsWebContents` must not have done any navigation, and it should not
 be used for other purposes after the call.
 
-By default Electron manages the devtools by creating an internal `WebContents`
+By default, Electron manages the DevTools by creating an internal `WebContents`
 with native view, which developers have very limited control of. With the
 `setDevToolsWebContents` method, developers can use any `WebContents` to show
-the devtools in it, including `BrowserWindow`, `BrowserView` and `<webview>`
-tag.
+the DevTools in it, such as [`BrowserWindow`](./browser-window.md) or [`WebContentsView`](./web-contents-view.md).
 
-Note that closing the devtools does not destroy the `devToolsWebContents`, it
-is caller's responsibility to destroy `devToolsWebContents`.
+Note that closing the DevTools does not destroy the `devToolsWebContents`, it
+is the caller's responsibility to destroy `devToolsWebContents` manually.
 
-An example of showing devtools in a `<webview>` tag:
-
-```html
-<html>
-<head>
-  <style type="text/css">
-    * { margin: 0; }
-    #browser { height: 70%; }
-    #devtools { height: 30%; }
-  </style>
-</head>
-<body>
-  <webview id="browser" src="https://github.com"></webview>
-  <webview id="devtools" src="about:blank"></webview>
-  <script>
-    const { ipcRenderer } = require('electron')
-    const emittedOnce = (element, eventName) => new Promise(resolve => {
-      element.addEventListener(eventName, event => resolve(event), { once: true })
-    })
-    const browserView = document.getElementById('browser')
-    const devtoolsView = document.getElementById('devtools')
-    const browserReady = emittedOnce(browserView, 'dom-ready')
-    const devtoolsReady = emittedOnce(devtoolsView, 'dom-ready')
-    Promise.all([browserReady, devtoolsReady]).then(() => {
-      const targetId = browserView.getWebContentsId()
-      const devtoolsId = devtoolsView.getWebContentsId()
-      ipcRenderer.send('open-devtools', targetId, devtoolsId)
-    })
-  </script>
-</body>
-</html>
-```
-
-```js
-// Main process
-const { ipcMain, webContents } = require('electron')
-
-ipcMain.on('open-devtools', (event, targetContentsId, devtoolsContentsId) => {
-  const target = webContents.fromId(targetContentsId)
-  const devtools = webContents.fromId(devtoolsContentsId)
-  target.setDevToolsWebContents(devtools)
-  target.openDevTools()
-})
-```
-
-An example of showing devtools in a `BrowserWindow`:
+An example of showing DevTools in a `BrowserWindow`:
 
 ```js title='main.js'
 const { app, BrowserWindow } = require('electron')
@@ -1944,31 +1974,31 @@ app.whenReady().then(() => {
 #### `contents.openDevTools([options])`
 
 * `options` Object (optional)
-  * `mode` string - Opens the devtools with specified dock state, can be
+  * `mode` string - Opens the DevTools with specified dock state, can be
     `left`, `right`, `bottom`, `undocked`, `detach`. Defaults to last used dock state.
     In `undocked` mode it's possible to dock back. In `detach` mode it's not.
-  * `activate` boolean (optional) - Whether to bring the opened devtools window
+  * `activate` boolean (optional) - Whether to bring the opened DevTools window
     to the foreground. The default is `true`.
   * `title` string (optional) - A title for the DevTools window (only in `undocked` or `detach` mode).
 
-Opens the devtools.
+Opens the DevTools.
 
 When `contents` is a `<webview>` tag, the `mode` would be `detach` by default,
 explicitly passing an empty `mode` can force using last used dock state.
 
-On Windows, if Windows Control Overlay is enabled, Devtools will be opened with `mode: 'detach'`.
+On Windows, if Window Control Overlay is enabled, DevTools will be opened with `mode: 'detach'`.
 
 #### `contents.closeDevTools()`
 
-Closes the devtools.
+Closes the DevTools view.
 
 #### `contents.isDevToolsOpened()`
 
-Returns `boolean` - Whether the devtools is opened.
+Returns `boolean` - Whether the DevTools view is opened.
 
 #### `contents.isDevToolsFocused()`
 
-Returns `boolean` - Whether the devtools view is focused .
+Returns `boolean` - Whether the DevTools view is focused .
 
 #### `contents.getDevToolsTitle()`
 
@@ -2214,7 +2244,7 @@ Returns `boolean` - If _offscreen rendering_ is enabled returns whether it is cu
 * `fps` Integer
 
 If _offscreen rendering_ is enabled sets the frame rate to the specified number.
-Only values between 1 and 240 are accepted.
+When `webPreferences.offscreen.useSharedTexture` is `false` only values between 1 and 240 are accepted.
 
 #### `contents.getFrameRate()`
 
@@ -2280,6 +2310,16 @@ Returns `string` - The identifier of a WebContents stream. This identifier can b
 with `navigator.mediaDevices.getUserMedia` using a `chromeMediaSource` of `tab`.
 The identifier is restricted to the web contents that it is registered to and is only valid for 10 seconds.
 
+#### `contents.getOrCreateDevToolsTargetId()`
+
+Returns `string` - The Chrome DevTools Protocol
+[TargetID](https://chromedevtools.github.io/devtools-protocol/tot/Target/#type-TargetID)
+associated with this WebContents. This is the reverse of
+[`webContents.fromDevToolsTargetId()`](#webcontentsfromdevtoolstargetidtargetid).
+
+> [!NOTE]
+> This method creates a new DevTools agent for this WebContents if one does not already exist.
+
 #### `contents.getOSProcessId()`
 
 Returns `Integer` - The operating system `pid` of the associated renderer
@@ -2290,6 +2330,20 @@ process.
 Returns `Integer` - The Chromium internal `pid` of the associated renderer. Can
 be compared to the `frameProcessId` passed by frame specific navigation events
 (e.g. `did-frame-navigate`)
+
+#### `contents.clone()`
+
+Returns `WebContents` - A cloned WebContents instance. This method creates a copy
+of the WebContents with the following attributes:
+
+* **WebPreferences** - All preferences from the original WebContents are copied
+* **SiteInstance** - Uses the same SiteInstance as the original. This means the cloned WebContents will reuse the same render process as the original when loading same-origin pages, and only spawn a new render process for cross-origin navigations. This process allocation behavior is consistent with window.open and tab duplication in Chromium. For more details, see [Chromium's Site Isolation](https://www.chromium.org/developers/design-documents/site-isolation/) design document.
+* **Opener relationship** - Inherits the opener (window.opener) relationship
+* **Navigation state** - Copies the navigation history and controller state
+
+The cloned WebContents is an independent instance with its own lifecycle that can be destroyed separately and will not contain any open web pages.
+
+This API is useful for use cases where you want to create a new WebContents that shares the same render process with the original for same-origin content, while maintaining full lifecycle independence. Additionally, reusing the existing render process can help optimize memory usage and page load speed to a certain extent, as it eliminates the overhead of spawning and initializing a new render process from scratch.
 
 #### `contents.takeHeapSnapshot(filePath)`
 
@@ -2389,6 +2443,20 @@ A `number` property that determines the zoom factor for this web contents.
 
 The zoom factor is the zoom percent divided by 100, so 300% = 3.0.
 
+#### `contents.zoomMode`
+
+<!--
+```YAML history
+added:
+  - pr-url: https://github.com/electron/electron/pull/49962
+```
+-->
+
+A `string` property that determines the zoom mode for this web contents.
+
+See [`contents.setZoomMode`](#contentssetzoommodemode) for a description of the
+available modes.
+
 #### `contents.frameRate`
 
 An `Integer` property that sets the frame rate of the web contents to the specified number.
@@ -2410,11 +2478,12 @@ A [`NavigationHistory`](navigation-history.md) used by this webContents.
 
 #### `contents.hostWebContents` _Readonly_
 
-A [`WebContents`](web-contents.md) instance that might own this `WebContents`.
+A `WebContents | null` property that represents a [`WebContents`](web-contents.md)
+instance that might own this `WebContents`.
 
 #### `contents.devToolsWebContents` _Readonly_
 
-A `WebContents | null` property that represents the of DevTools `WebContents` associated with a given `WebContents`.
+A `WebContents | null` property that represents the DevTools `WebContents` associated with a given `WebContents`.
 
 > [!NOTE]
 > Users should never store this object because it may become `null`

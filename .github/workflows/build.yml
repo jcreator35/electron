@@ -6,8 +6,8 @@ on:
       build-image-sha:
         type: string
         description: 'SHA for electron/build image'
-        default: '933c7d6ff6802706875270bec2e3c891cf8add3f'
-        required: true
+        default: ''
+        required: false
       skip-macos:
         type: boolean
         description: 'Skip macOS builds'
@@ -47,45 +47,62 @@ permissions: {}
 
 jobs:
   setup:
-    runs-on: ubuntu-latest
+    if: github.repository == 'electron/electron'
+    runs-on: ubuntu-slim
     permissions:
       contents: read
       pull-requests: read
     outputs:
-        docs: ${{ steps.filter.outputs.docs }}
-        src: ${{ steps.filter.outputs.src }}
-        build-image-sha: ${{ steps.set-output.outputs.build-image-sha }}
+        docs: ${{ fromJSON(steps.filter.outputs.results).docs }}
+        src: ${{ fromJSON(steps.filter.outputs.results).src }}
+        build-image-sha: ${{ steps.build-image-sha.outputs.build-image-sha }}
         docs-only: ${{ steps.set-output.outputs.docs-only }}
+        pgo-only: ${{ steps.set-output.outputs.pgo-only }}
     steps:
-    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       with:
         ref: ${{ github.event.pull_request.head.sha }}
-    - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+    # The filters are evaluated per-pattern and OR'd together, so the src
+    # exclusions must live inside a single negated brace pattern - a second
+    # negated pattern would match (and re-include) every file the first one
+    # excluded.
+    - uses: ./.github/actions/paths-filter
       id: filter
       with:
         filters: |
           docs:
             - 'docs/**'
+            - '.claude/**'
+            - '.github/ISSUE_TEMPLATE/**'
+            - '.github/PULL_REQUEST_TEMPLATE.md'
+            - '.github/config.yml'
             - README.md
             - SECURITY.md
             - CONTRIBUTING.md
             - CODE_OF_CONDUCT.md
+          pgo:
+            - 'build/pgo_profiles/*.pgo.txt'
           src:
-            - '!docs/**'
-    - name: Set Outputs for Build Image SHA & Docs Only
+            - '!{docs/**,.claude/**,.github/ISSUE_TEMPLATE/**,.github/PULL_REQUEST_TEMPLATE.md,.github/config.yml,README.md,SECURITY.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,build/pgo_profiles/*.pgo.txt}'
+    - name: Set Build Image SHA
+      id: build-image-sha
+      uses: ./.github/actions/build-image-sha
+      with:
+        override: ${{ inputs.build-image-sha }}
+    - name: Set Docs Only
       id: set-output
       run: |
-        if [ -z "${{ inputs.build-image-sha }}" ]; then
-          echo "build-image-sha=933c7d6ff6802706875270bec2e3c891cf8add3f" >> "$GITHUB_OUTPUT"
-        else
-          echo "build-image-sha=${{ inputs.build-image-sha }}" >> "$GITHUB_OUTPUT"
-        fi
-        echo "docs-only=${{ steps.filter.outputs.docs == 'true' && steps.filter.outputs.src == 'false' }}" >> "$GITHUB_OUTPUT"
+        echo "docs-only=${{ fromJSON(steps.filter.outputs.results).docs == 'true' && fromJSON(steps.filter.outputs.results).src == 'false' }}" >> "$GITHUB_OUTPUT"
+        echo "pgo-only=${{ fromJSON(steps.filter.outputs.results).pgo == 'true' && fromJSON(steps.filter.outputs.results).src == 'false' && fromJSON(steps.filter.outputs.results).docs == 'false' }}" >> "$GITHUB_OUTPUT"
 
   # Lint Jobs
+  # pgo-only changes skip lint too: the state files are machine-written
+  # single-line text files no linter covers, and skipping reports the
+  # required "lint / Lint" check as skipped, which branch protection treats
+  # as satisfied.
   lint:
     needs: setup
-    if: ${{ !inputs.skip-lint }}
+    if: ${{ !inputs.skip-lint && needs.setup.outputs.pgo-only != 'true' }}
     uses: ./.github/workflows/pipeline-electron-lint.yml
     permissions:
       contents: read
@@ -124,7 +141,7 @@ jobs:
       build-image-sha: ${{ needs.setup.outputs.build-image-sha }}
     steps:
     - name: Checkout Electron
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       with:
         path: src/electron
         fetch-depth: 0
@@ -135,9 +152,12 @@ jobs:
         generate-sas-token: 'true'
         target-platform: macos
 
+  # No plain src gate here: the docs-only compile needs this checkout even
+  # when src is false. pgo-only changes have no consumer for it, so they
+  # skip it via the docs-only output instead.
   checkout-linux:
     needs: setup
-    if: ${{ !inputs.skip-linux}}
+    if: ${{ (needs.setup.outputs.src == 'true' || needs.setup.outputs.docs-only == 'true') && !inputs.skip-linux }}
     runs-on: electron-arc-centralus-linux-amd64-32core
     permissions:
       contents: read
@@ -156,7 +176,7 @@ jobs:
       build-image-sha: ${{ needs.setup.outputs.build-image-sha}}
     steps:
     - name: Checkout Electron
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       with:
         path: src/electron
         fetch-depth: 0
@@ -188,7 +208,7 @@ jobs:
       build-image-sha: ${{ needs.setup.outputs.build-image-sha}}
     steps:
     - name: Checkout Electron
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       with:
         path: src/electron
         fetch-depth: 0
@@ -198,6 +218,15 @@ jobs:
       with:
         generate-sas-token: 'true'
         target-platform: win
+
+  # Build a patched siso binary for Windows CI in parallel with checkout-windows.
+  # The Windows build jobs download the resulting artifact and use it via SISO_PATH.
+  build-siso-windows:
+    needs: setup
+    if: ${{ needs.setup.outputs.src == 'true' && !inputs.skip-windows }}
+    uses: ./.github/workflows/pipeline-segment-build-siso-windows.yml
+    permissions:
+      contents: read
 
   # GN Check Jobs
   macos-gn-check:
@@ -264,10 +293,11 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    uses: ./.github/workflows/pipeline-electron-build-and-test.yml
+    uses: ./.github/workflows/pipeline-electron-build-and-tidy-and-test.yml
     needs: checkout-macos
     with:
       build-runs-on: macos-15-xlarge
+      clang-tidy-runs-on: macos-15-xlarge
       test-runs-on: macos-15
       target-platform: macos
       target-arch: arm64
@@ -283,13 +313,15 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    uses: ./.github/workflows/pipeline-electron-build-and-test-and-nan.yml
+    uses: ./.github/workflows/pipeline-electron-build-and-tidy-and-test-and-nan.yml
     needs: checkout-linux
     if: ${{ needs.setup.outputs.src == 'true' }}
     with:
       build-runs-on: electron-arc-centralus-linux-amd64-32core
+      clang-tidy-runs-on: electron-arc-centralus-linux-amd64-8core
       test-runs-on: electron-arc-centralus-linux-amd64-4core
       build-container: '{"image":"ghcr.io/electron/build:${{ needs.checkout-linux.outputs.build-image-sha }}","options":"--user root","volumes":["/mnt/cross-instance-cache:/mnt/cross-instance-cache"]}'
+      clang-tidy-container: '{"image":"ghcr.io/electron/build:${{ needs.checkout-linux.outputs.build-image-sha }}","options":"--user root","volumes":["/mnt/cross-instance-cache:/mnt/cross-instance-cache"]}'
       test-container: '{"image":"ghcr.io/electron/build:${{ needs.checkout-linux.outputs.build-image-sha }}","options":"--user root --privileged --init"}'
       target-platform: linux
       target-arch: x64
@@ -362,18 +394,32 @@ jobs:
       generate-symbols: false
       upload-to-storage: '0'
     secrets: inherit
+    
+  test-linux-arm64-64k:
+    uses: ./.github/workflows/pipeline-segment-electron-test-64k.yml
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    needs: [checkout-linux, linux-arm64]
+    with:
+      test-runs-on: ubuntu-22.04-arm
+      test-container: '{"image":"ghcr.io/electron/test:arm64v8-${{ needs.checkout-linux.outputs.build-image-sha }}","options":"--user root --privileged --init"}'
+    secrets: inherit
 
   windows-x64:
     permissions:
       contents: read
       issues: read
       pull-requests: read
-    uses: ./.github/workflows/pipeline-electron-build-and-test.yml
-    needs: checkout-windows
+    uses: ./.github/workflows/pipeline-electron-build-and-tidy-and-test.yml
+    needs: [checkout-windows, build-siso-windows]
     if: ${{ needs.setup.outputs.src == 'true' && !inputs.skip-windows }}
     with:
       build-runs-on: electron-arc-centralus-windows-amd64-16core
+      clang-tidy-runs-on: electron-arc-centralus-linux-amd64-8core
       test-runs-on: windows-latest
+      clang-tidy-container: '{"image":"ghcr.io/electron/build:${{ needs.checkout-windows.outputs.build-image-sha }}","options":"--user root --device /dev/fuse --cap-add SYS_ADMIN","volumes":["/mnt/win-cache:/mnt/win-cache"]}'
       target-platform: win
       target-arch: x64
       is-release: false
@@ -388,7 +434,7 @@ jobs:
       issues: read
       pull-requests: read
     uses: ./.github/workflows/pipeline-electron-build-and-test.yml
-    needs: checkout-windows
+    needs: [checkout-windows, build-siso-windows]
     if: ${{ needs.setup.outputs.src == 'true' && !inputs.skip-windows }}
     with:
       build-runs-on: electron-arc-centralus-windows-amd64-16core
@@ -407,7 +453,7 @@ jobs:
       issues: read
       pull-requests: read
     uses: ./.github/workflows/pipeline-electron-build-and-test.yml
-    needs: checkout-windows
+    needs: [checkout-windows, build-siso-windows]
     if: ${{ needs.setup.outputs.src == 'true' && !inputs.skip-windows }}
     with:
       build-runs-on: electron-arc-centralus-windows-amd64-16core
@@ -425,9 +471,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    needs: [docs-only, macos-x64, macos-arm64, linux-x64, linux-x64-asan, linux-arm, linux-arm64, windows-x64, windows-x86, windows-arm64]
-    if: always() && !contains(needs.*.result, 'failure')
-    steps: 
+    needs: [docs-only, macos-x64, macos-arm64, linux-x64, linux-x64-asan, linux-arm, linux-arm64, build-siso-windows, windows-x64, windows-x86, windows-arm64]
+    if: always() && github.repository == 'electron/electron'
+    steps:
+    - name: Fail if any needed job failed or was cancelled
+      if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      run: exit 1
     - name: GitHub Actions Jobs Done
       run: |
         echo "All GitHub Actions Jobs are done"
